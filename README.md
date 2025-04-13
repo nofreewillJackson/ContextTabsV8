@@ -4,6 +4,9 @@ For a smoother experience, when Chrome prompts you before removing tab groups, w
 
 ![](readmeIMGs/Pasted%20image%2020250413151945.png)
 
+By: Rylan S, Jackson W, Dylan H
+
+
  Context Focus helps you stay on task by understanding the *type* of content you're viewing and gently (or firmly!) guiding you back when you stray during focused work sessions.
 
 It automatically categorizes web pages (like "Work", "Learning", "Social", "News") and lets you define which categories are allowed when you need to concentrate.
