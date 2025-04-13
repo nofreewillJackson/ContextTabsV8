@@ -1,0 +1,6100 @@
+# ./webpack.config.js
+################################################################################
+const path = require("path");
+const CopyPlugin = require("copy-webpack-plugin");
+const { CleanWebpackPlugin } = require("clean-webpack-plugin");
+
+/* Clean compiler that only wipes the folder */
+const clean = {
+  name: "clean",
+  mode: "production",
+  output: { path: path.resolve(__dirname, "dist") },
+  plugins: [ new CleanWebpackPlugin() ],
+  entry: {}
+};
+
+/* UI compiler (without CleanWebpackPlugin) */
+const ui = {
+  name: 'ui',
+  mode: "production",
+  devtool: "source-map",
+  entry: {
+    content: "./src/content/index.ts",
+    popup: "./src/popup/popup.ts",
+    options: "./src/options/options.ts",
+    sidepanel: "./src/sidepanel/index.ts",
+    blocked: "./src/blocked.ts" // ← add this line
+  },
+  output: {
+    path: path.resolve(__dirname, "dist"),
+    filename: "[name].js"
+  },
+  resolve: {
+    extensions: [".ts", ".js"]
+  },
+  module: {
+    rules: [
+      {
+        test: /\.tsx?$/,
+        use: "ts-loader",
+        exclude: /node_modules/
+      }
+    ]
+  },
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { from: "src/popup/popup.html", to: "popup.html" },
+        { from: "src/options/options.html", to: "options.html" },
+        { from: "src/sidepanel/index.html", to: "sidepanel.html" },
+        { from: "src/blocked.html", to: "blocked.html" },
+        { from: "src/focusmode.html", to: "focusmode.html" },
+        { from: "src/onboarding.html", to: "onboarding.html", noErrorOnMissing: true },
+        { from: "manifest.json", to: "manifest.json" },
+        { from: "icons", to: "icons" },
+        { from: "src/sounds", to: "sounds", noErrorOnMissing: true }
+      ]
+    })
+  ]
+};
+
+/* Background compiler */
+const bg = {
+  name: 'bg',
+  mode: 'production',
+  target: 'webworker',
+  devtool: 'source-map',
+  entry: { background: './src/background/index.ts' },
+  output: { 
+    path: path.resolve(__dirname, 'dist'),
+    filename: '[name].js' 
+  },
+  resolve: { extensions: ['.ts', '.js'] },
+  module: { 
+    rules: [{ 
+      test: /\.tsx?$/, 
+      use: 'ts-loader', 
+      exclude: /node_modules/ 
+    }] 
+  }
+};
+
+/* Export all three - webpack will run them in order */
+module.exports = [clean, ui, bg];
+
+# ./src/blocked.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Focus Check</title>
+  <style>
+    body {
+      background: #1976d2;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding-top: 50px;
+      margin: 0;
+      transition: background-color 0.5s;
+    }
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    h1 {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+    p {
+      margin-bottom: 15px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    select, button {
+      background-color: white;
+      color: #1976d2;
+      border: none;
+      padding: 10px 15px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 10px 5px;
+      border-radius: 4px;
+      min-width: 200px;
+    }
+    select {
+      text-align: center;
+    }
+    button:hover {
+      background-color: #f0f0f0;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    #remaining {
+      font-size: 1.2em;
+      margin-top: 20px;
+    }
+    .choice-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px 0;
+    }
+    .buttons {
+      margin-top: 20px;
+    }
+    .timer {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-top: 30px;
+    }
+    .highlight {
+      font-weight: bold;
+      color: #ffeb3b;
+    }
+    .on-track {
+      background: #43a047;
+    }
+    .off-track {
+      background: #e53935;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⏱️ Focus Check</h1>
+    <p>This page was automatically categorized as <span id="detected-context" class="highlight">Unknown</span></p>
+    <p>Are you still on track with your focus goals?</p>
+    
+    <div class="choice-area">
+      <select id="context-selector">
+        <option value="" disabled selected>Select the correct context...</option>
+        <option value="Work">Work</option>
+        <option value="Development">Development</option>
+        <option value="Research">Research</option>
+        <option value="Learning">Learning</option>
+        <option value="Entertainment">Entertainment</option>
+        <option value="Social">Social</option>
+        <option value="Shopping">Shopping</option>
+        <option value="News">News</option>
+      </select>
+      
+      <div class="buttons">
+        <button id="save-continue">This is work-related, continue</button>
+        <button id="back-button">Go back, I'm off track</button>
+      </div>
+    </div>
+    
+    <div class="timer">
+      <div id="remaining">Focus session ends in <span id="countdown">--:--</span></div>
+    </div>
+  </div>
+  <script src="blocked.js"></script>
+</body>
+</html> 
+
+# ./src/blocked.ts
+################################################################################
+// blocked.ts (CSP-compliant external script for blocked.html)
+import { submitFeedback } from "./api/feedbackApi";
+
+const urlParams = new URLSearchParams(window.location.search);
+const detectedContext = urlParams.get("context") || "Unknown";
+const originalUrl = urlParams.get("url") || "";
+const domain = originalUrl ? new URL(originalUrl).hostname : "";
+
+document.addEventListener("DOMContentLoaded", () => {
+  const detectedEl = document.getElementById("detected-context");
+  if (detectedEl) {
+    detectedEl.textContent = detectedContext;
+  }
+
+  updateCountdown();
+  setInterval(updateCountdown, 5000);
+
+  const selector = document.getElementById("context-selector") as HTMLSelectElement;
+  if (selector && detectedContext !== "Unknown") {
+    for (let i = 0; i < selector.options.length; i++) {
+      if (selector.options[i].value === detectedContext) {
+        selector.selectedIndex = i;
+        break;
+      }
+    }
+  }
+
+  const saveBtn = document.getElementById("save-continue") as HTMLButtonElement;
+  const backBtn = document.getElementById("back-button") as HTMLButtonElement;
+
+  saveBtn?.addEventListener("click", async () => {
+    const selectedContext = selector.value;
+    if (!selectedContext) {
+      alert("Please select a context category first");
+      return;
+    }
+
+    try {
+      const focusState = await chrome.runtime.sendMessage({ type: "FOCUS_STATUS" });
+      if (focusState?.allowedContexts && !focusState.allowedContexts.includes(selectedContext)) {
+        document.body.classList.add("off-track");
+        alert(`${selectedContext} context is not allowed during your current focus session`);
+        return;
+      }
+
+      // Disable button while processing
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Processing...";
+      
+      let feedbackSuccess = true;
+      if (domain && detectedContext !== selectedContext) {
+        console.log(`[blocked.ts] Submitting feedback - originalUrl: ${originalUrl}, domain: ${domain}, predicted: ${detectedContext}, corrected: ${selectedContext}`);
+        const result = await submitFeedback(
+          originalUrl,
+          detectedContext,
+          selectedContext,
+          'blockedPage'
+        );
+        
+        let finalFeedbackResult = { success: result.success };
+        
+        if (result.isMultiPurposeDomain) {
+          const overrideType = await promptForOverrideType(domain);
+          if (overrideType) {
+            // Submit again with the chosen override type
+            finalFeedbackResult = await submitFeedback(
+              originalUrl,
+              detectedContext,
+              selectedContext,
+              'blockedPage',
+              overrideType
+            );
+          } else {
+            // User cancelled the prompt
+            console.log("[blocked.ts] User cancelled override type selection.");
+            feedbackSuccess = false;
+          }
+        }
+        
+        feedbackSuccess = finalFeedbackResult.success; // Update success based on final call
+        console.log(`[blocked.ts] Feedback submission result: ${feedbackSuccess}`);
+      }
+
+      if (feedbackSuccess) {
+        // *** NEW: Request background to navigate ***
+        console.log(`[blocked.ts] Requesting navigation to: ${originalUrl}`);
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id && originalUrl) {
+          try {
+            const navResponse = await chrome.runtime.sendMessage({
+              type: "REQUEST_NAVIGATION",
+              payload: {
+                tabId: tab.id,
+                url: originalUrl
+              }
+            });
+            if (!navResponse?.success) {
+              console.error("[blocked.ts] Background navigation request failed.");
+              alert("Could not navigate back automatically. Please try again.");
+              // Re-enable button on failure
+              saveBtn.disabled = false;
+              saveBtn.textContent = "This is work-related, continue";
+            }
+            // If successful, the background handles navigation, this page might close or change.
+          } catch (error) {
+            console.error("[blocked.ts] Error sending navigation request:", error);
+            alert("An error occurred trying to navigate back. Please try again.");
+            saveBtn.disabled = false;
+            saveBtn.textContent = "This is work-related, continue";
+          }
+        } else {
+          console.warn("[blocked.ts] Could not get tab ID or original URL for navigation request.");
+          alert("Cannot navigate back automatically (missing info).");
+          saveBtn.disabled = false;
+          saveBtn.textContent = "This is work-related, continue";
+        }
+      } else {
+        // Re-enable button if feedback submission failed or was cancelled
+        alert("Could not process feedback. Please try again.");
+        saveBtn.disabled = false;
+        saveBtn.textContent = "This is work-related, continue";
+      }
+
+    } catch (err) {
+      console.error("[blocked.ts] Error processing feedback and continuing:", err);
+      alert("There was an error saving your selection. Please try again.");
+      // Re-enable button on error
+      saveBtn.disabled = false;
+      saveBtn.textContent = "This is work-related, continue";
+    }
+  });
+
+  backBtn?.addEventListener("click", async () => {
+    try {
+      await chrome.runtime.sendMessage({
+        type: "STAY_FOCUSED_ACTION",
+        payload: {
+          url: originalUrl,
+          context: detectedContext,
+          title: domain
+        }
+      });
+    } catch (err) {
+      console.error("Error going back:", err);
+      window.location.href = "https://google.com";
+    }
+  });
+});
+
+/**
+ * Prompt the user to choose how to apply the context override
+ */
+async function promptForOverrideType(domain: string): Promise<"domain" | "url-pattern" | null> {
+  // Create a modal dialog
+  const modal = document.createElement("div");
+  modal.style.position = "fixed";
+  modal.style.top = "0";
+  modal.style.left = "0";
+  modal.style.width = "100%";
+  modal.style.height = "100%";
+  modal.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
+  modal.style.display = "flex";
+  modal.style.justifyContent = "center";
+  modal.style.alignItems = "center";
+  modal.style.zIndex = "1000";
+  
+  const dialog = document.createElement("div");
+  dialog.style.backgroundColor = "white";
+  dialog.style.borderRadius = "8px";
+  dialog.style.padding = "20px";
+  dialog.style.maxWidth = "450px";
+  dialog.style.color = "#333";
+  dialog.style.textAlign = "left";
+  
+  dialog.innerHTML = `
+    <h3 style="margin-top: 0; color: #1976d2;">Apply this correction</h3>
+    <p>${domain} can have different contexts on different pages.</p>
+    <div style="display: flex; flex-direction: column; gap: 10px; margin: 15px 0;">
+      <button id="this-page-btn" style="padding: 10px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        Just this page (recommended)
+      </button>
+      <button id="all-pages-btn" style="padding: 10px; background: #e0e0e0; color: #333; border: none; border-radius: 4px; cursor: pointer;">
+        All ${domain} pages
+      </button>
+      <button id="cancel-btn" style="padding: 10px; background: transparent; color: #666; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">
+        Cancel
+      </button>
+    </div>
+  `;
+  
+  modal.appendChild(dialog);
+  document.body.appendChild(modal);
+  
+  return new Promise((resolve) => {
+    document.getElementById("this-page-btn")?.addEventListener("click", () => {
+      document.body.removeChild(modal);
+      resolve("url-pattern");
+    });
+    
+    document.getElementById("all-pages-btn")?.addEventListener("click", () => {
+      document.body.removeChild(modal);
+      resolve("domain");
+    });
+    
+    document.getElementById("cancel-btn")?.addEventListener("click", () => {
+      document.body.removeChild(modal);
+      resolve(null);
+    });
+  });
+}
+
+async function safeGetTimeLeft(): Promise<{ seconds: number }> {
+  try {
+    return await chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
+  } catch {
+    await new Promise((res) => setTimeout(res, 100));
+    return chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
+  }
+}
+
+async function updateCountdown(): Promise<void> {
+  const resp = await safeGetTimeLeft();
+  const secs = Math.floor(resp?.seconds ?? 0);
+  const countdown = document.getElementById("countdown");
+  if (!countdown) return;
+
+  if (secs === -1) {
+    countdown.textContent = "∞ (unlimited)";
+  } else if (secs > 0) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    countdown.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+  } else {
+    // Focus session has ended but user is still on blocked page
+    countdown.textContent = "Session ended";
+    
+    // Show message that they can continue if they want
+    const remaining = document.getElementById("remaining");
+    if (remaining) {
+      remaining.innerHTML = "Focus session has ended. <span style='color:#ffeb3b'>You may continue if you wish.</span>";
+    }
+  }
+}
+
+function navigateToContextSite(context: string): string {
+  const contextSites: Record<string, string> = {
+    Work: "https://docs.google.com",
+    Development: "https://github.com",
+    Research: "https://scholar.google.com",
+    Learning: "https://coursera.org",
+    News: "https://news.google.com",
+    Social: "https://linkedin.com",
+    Shopping: "https://google.com",
+    Entertainment: "https://google.com",
+  };
+  return contextSites[context] || "https://google.com";
+}
+
+
+# ./src/onboarding.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Welcome to Context Focus</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .header {
+      background-color: #0d47a1;
+      color: white;
+      padding: 20px;
+      text-align: center;
+      border-radius: 8px;
+      margin-bottom: 30px;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .step {
+      display: flex;
+      margin-bottom: 20px;
+    }
+    .step-number {
+      background-color: #0d47a1;
+      color: white;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 30px;
+      margin-right: 15px;
+      flex-shrink: 0;
+    }
+    .btn {
+      display: inline-block;
+      background-color: #0d47a1;
+      color: white;
+      padding: 10px 20px;
+      text-decoration: none;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Welcome to Context Focus</h1>
+    <p>Take control of your digital focus with smart context switching</p>
+  </div>
+
+  <div class="card">
+    <h2>Getting Started</h2>
+    
+    <div class="step">
+      <div class="step-number">1</div>
+      <div>
+        <h3>Define Your Contexts</h3>
+        <p>Context Focus helps you by identifying the type of content you're viewing. Open the extension options to customize the contexts you want to focus on.</p>
+      </div>
+    </div>
+    
+    <div class="step">
+      <div class="step-number">2</div>
+      <div>
+        <h3>Start a Focus Session</h3>
+        <p>When you're ready to focus, click the extension icon and start a focus session. Choose which contexts to allow and how long to stay focused.</p>
+      </div>
+    </div>
+    
+    <div class="step">
+      <div class="step-number">3</div>
+      <div>
+        <h3>Park Links for Later</h3>
+        <p>Found something interesting but outside your focus? Use the "Park for Later" feature to save links without breaking your focus.</p>
+      </div>
+    </div>
+    
+    <a href="options.html" class="btn">Configure Extension Settings</a>
+  </div>
+  
+  <div class="card">
+    <h2>Need Help?</h2>
+    <p>If you have any questions or feedback, please visit our documentation or contact support.</p>
+  </div>
+</body>
+</html> 
+
+# ./src/sidepanel.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Focus Session</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    .panel {
+      max-width: 400px;
+      margin: 0 auto;
+    }
+    .timer {
+      font-size: 36px;
+      font-weight: bold;
+      text-align: center;
+      margin: 20px 0;
+      color: #0066cc;
+    }
+    h1 {
+      text-align: center;
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+    .blocked-section {
+      margin-top: 20px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 8px;
+    }
+    button {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background-color: #f44336;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    button:hover {
+      background-color: #e53935;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #333;
+        color: #f5f5f5;
+      }
+      .blocked-section {
+        background-color: #444;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Focus Session</h1>
+    <div class="timer" id="timer">00:00:00</div>
+    
+    <div class="blocked-section">
+      <h2>Blocked Categories</h2>
+      <ul id="blockedList">
+        <li>Loading...</li>
+      </ul>
+    </div>
+    
+    <!-- Parked links section -->
+    <div id="parkedLinks" class="blocked-section">
+      <!-- Parked links will be inserted here by JavaScript -->
+    </div>
+    
+    <button id="endBtn">End Focus Session</button>
+  </div>
+  
+  <script src="sidepanel.js"></script>
+</body>
+</html> 
+
+# ./src/focusmode.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Focus Mode</title>
+  <style>
+    html,body{margin:0;height:100%;display:flex;align-items:center;
+              justify-content:center;background:#1565c0;color:#fff;
+              font:24px/1.4 system-ui,sans-serif;text-align:center}
+    h1{font-size:2.5rem;margin:0 0 .5em}
+  </style>
+</head>
+<body>
+  <div>
+    <h1>🔵 Focus mode is ON</h1>
+    <p>Your previous tabs are safely parked.<br>
+       They'll be restored automatically when you end the session.</p>
+  </div>
+</body>
+</html> 
+
+# ./src/api/focusApi.ts
+################################################################################
+import { getStorage, setStorage } from "./storageApi";
+import { FocusStatus, FocusSettings, ContextSwitch } from "../types/index";
+
+const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
+  enabled: true,
+  notificationsEnabled: true,
+  switchThreshold: 5,
+  timeWindowMinutes: 15
+};
+
+/**
+ * Get the current focus settings
+ */
+export async function getFocusSettings(): Promise<FocusSettings> {
+  const { focusSettings } = await getStorage(["focusSettings"]);
+  return { ...DEFAULT_FOCUS_SETTINGS, ...focusSettings };
+}
+
+/**
+ * Update focus settings
+ */
+export async function updateFocusSettings(settings: Partial<FocusSettings>): Promise<void> {
+  const currentSettings = await getFocusSettings();
+  await setStorage({ 
+    focusSettings: { ...currentSettings, ...settings } 
+  });
+}
+
+/**
+ * Get context switches in a time window
+ */
+export async function getContextSwitches(timeWindowMinutes: number = 15): Promise<ContextSwitch[]> {
+  const { contextHistory } = await getStorage(["contextHistory"]);
+  if (!contextHistory || contextHistory.length < 2) {
+    return [];
+  }
+  
+  const switches: ContextSwitch[] = [];
+  const now = Date.now();
+  const timeWindow = timeWindowMinutes * 60 * 1000;
+  
+  // Filter history to time window
+  const relevantHistory = contextHistory.filter(
+    entry => (now - entry.timestamp) < timeWindow
+  );
+  
+  // Find context switches
+  for (let i = 1; i < relevantHistory.length; i++) {
+    if (relevantHistory[i].context !== relevantHistory[i-1].context) {
+      switches.push({
+        from: relevantHistory[i-1].context,
+        to: relevantHistory[i].context,
+        timestamp: relevantHistory[i].timestamp,
+        fromUrl: relevantHistory[i-1].url,
+        toUrl: relevantHistory[i].url
+      });
+    }
+  }
+  
+  return switches;
+}
+
+/**
+ * Check if focus is lost based on context switching
+ */
+export async function checkFocusStatus(): Promise<FocusStatus> {
+  const settings = await getFocusSettings();
+  const switches = await getContextSwitches(settings.timeWindowMinutes);
+  
+  let currentContext = "Unknown";
+  let currentStreak = 1;
+  
+  // Get most recent context and streak
+  const { contextHistory } = await getStorage(["contextHistory"]);
+  if (contextHistory && contextHistory.length > 0) {
+    currentContext = contextHistory[contextHistory.length - 1].context;
+    
+    // Count consecutive entries with same context
+    let i = contextHistory.length - 1;
+    while (i > 0 && contextHistory[i].context === currentContext) {
+      currentStreak++;
+      i--;
+    }
+  }
+  
+  // Determine if focus is lost
+  const isLostFocus = switches.length >= settings.switchThreshold;
+  
+  return {
+    isLostFocus,
+    contextSwitches: switches,
+    currentStreak,
+    currentContext
+  };
+}
+
+/**
+ * Show focus notification
+ */
+export function showFocusNotification(contextSwitches: ContextSwitch[]): void {
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Alert',
+    message: `You've switched contexts ${contextSwitches.length} times recently. Try to maintain focus.`,
+    buttons: [
+      { title: 'View Details' }
+    ]
+  });
+}
+
+# ./src/api/parkedLinksApi.ts
+################################################################################
+import { getStorage, setStorage } from "./storageApi";
+import { ParkedLink } from "../types/index";
+
+/**
+ * Save a link for later viewing
+ */
+export async function saveForLater(url: string, context: string, title?: string): Promise<void> {
+  const { parkedLinks = [] } = await getStorage(["parkedLinks"]);
+  
+  // Check if the URL is already parked to avoid duplicates
+  const isDuplicate = parkedLinks.some(link => link.url === url);
+  
+  if (!isDuplicate) {
+    const newLink: ParkedLink = {
+      url,
+      title,
+      context,
+      timestamp: Date.now()
+    };
+    
+    await setStorage({
+      parkedLinks: [...parkedLinks, newLink]
+    });
+  }
+}
+
+/**
+ * Get all parked links
+ */
+export async function getParkedLinks(): Promise<ParkedLink[]> {
+  const { parkedLinks = [] } = await getStorage(["parkedLinks"]);
+  return parkedLinks;
+}
+
+/**
+ * Open all parked links in new tabs and clear the list
+ */
+export async function releaseParkedLinks(): Promise<void> {
+  const parkedLinks = await getParkedLinks();
+  
+  if (parkedLinks.length === 0) {
+    return;
+  }
+  
+  // Create a new tab group for the parked links
+  const currentWindow = await chrome.windows.getCurrent();
+  let groupId: number | undefined;
+  
+  try {
+    // Open all the links in new tabs
+    const openedTabIds: number[] = [];
+    
+    for (const link of parkedLinks) {
+      const tab = await chrome.tabs.create({
+        url: link.url,
+        active: false
+      });
+      
+      if (tab.id) {
+        openedTabIds.push(tab.id);
+      }
+    }
+    
+    // Group the tabs if we have any
+    if (openedTabIds.length > 0) {
+      try {
+        groupId = await chrome.tabs.group({
+          tabIds: openedTabIds
+        });
+        
+        if (groupId) {
+          await chrome.tabGroups.update(groupId, {
+            title: "Parked Links",
+            color: "blue"
+          });
+        }
+      } catch (groupError) {
+        console.error("Error creating tab group:", groupError);
+      }
+    }
+    
+    // Clear the parked links list
+    await setStorage({ parkedLinks: [] });
+    
+    // Show a notification
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon48.png"),
+      title: "Parked Links Opened",
+      message: `Opened ${parkedLinks.length} links that were saved during your focus session.`
+    });
+  } catch (error) {
+    console.error("Error opening parked links:", error);
+  }
+}
+
+/**
+ * More robust function to navigate back or close the current tab
+ */
+export async function goBackOrClose(tabId: number): Promise<void> {
+  try {
+    // Get tab info first to confirm it exists
+    const tab = await chrome.tabs.get(tabId);
+    
+    // First try to determine if we can go back using script injection
+    try {
+      const historyResults = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => ({
+          canGoBack: window.history.length > 1,
+          url: window.location.href
+        })
+      });
+      
+      const { canGoBack } = historyResults[0].result;
+      
+      if (canGoBack) {
+        // Navigate back if possible using script injection
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => window.history.back()
+        });
+        
+        // Give the page time to restore from bfcache
+        setTimeout(() => {
+          // Force the content script to rescan the context
+          chrome.tabs.sendMessage(tabId, { type: 'FORCE_CONTEXT_RESCAN' })
+            .catch(err => console.log('Tab not ready for context rescan yet, bfcache listener will handle it'));
+        }, 500);
+        
+        // Success, we're done
+        return;
+      }
+      
+      // Can't go back, use fallback approach
+      await handleNavigationFallback(tabId, tab);
+    } catch (err) {
+      console.error("Script execution error:", err);
+      
+      // Fallback to simpler chrome.tabs.goBack API
+      try {
+        await chrome.tabs.goBack(tabId);
+        
+        // Give the page time to restore from bfcache
+        setTimeout(() => {
+          // Force the content script to rescan the context
+          chrome.tabs.sendMessage(tabId, { type: 'FORCE_CONTEXT_RESCAN' })
+            .catch(err => console.log('Tab not ready for context rescan yet, bfcache listener will handle it'));
+        }, 500);
+      } catch (backError) {
+        // If that fails too, use final fallback
+        await handleNavigationFallback(tabId, tab);
+      }
+    }
+  } catch (err) {
+    console.error("Tab lookup error:", err);
+    // Tab might no longer exist, nothing to do
+  }
+}
+
+/**
+ * Fallback navigation handler when going back isn't possible
+ */
+async function handleNavigationFallback(tabId: number, tab: chrome.tabs.Tab): Promise<void> {
+  try {
+    // Get all tabs in the window
+    const allTabs = await chrome.tabs.query({ windowId: tab.windowId });
+    
+    if (allTabs.length > 1) {
+      // More than one tab, find one to focus
+      const currentIndex = allTabs.findIndex(t => t.id === tabId);
+      const targetIndex = currentIndex > 0 ? currentIndex - 1 : (currentIndex + 1) % allTabs.length;
+      const targetTab = allTabs[targetIndex];
+      
+      // Focus the other tab first
+      if (targetTab.id) {
+        await chrome.tabs.update(targetTab.id, { active: true });
+        
+        // Then remove the current tab
+        setTimeout(() => {
+          chrome.tabs.remove(tabId).catch(e => {
+            console.error("Tab removal failed:", e);
+          });
+        }, 100);
+      }
+    } else {
+      // Last tab, navigate to blank page instead
+      await chrome.tabs.update(tabId, { url: "about:blank" });
+    }
+  } catch (e) {
+    console.error("Navigation fallback failed:", e);
+    // Last resort - try basic navigation
+    try {
+      await chrome.tabs.update(tabId, { url: "about:blank" });
+    } catch (finalError) {
+      console.error("Final fallback failed:", finalError);
+    }
+  }
+}
+
+/**
+ * Show a toast notification in the current tab
+ */
+export async function showToast(tabId: number, message: string, duration = 3000): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (msg: string, dur: number) => {
+        const toast = document.createElement("div");
+        toast.style.cssText = `
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background-color: rgba(0, 102, 204, 0.9);
+          color: white;
+          padding: 12px 20px;
+          border-radius: 4px;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+          font-family: Arial, sans-serif;
+          z-index: 2147483647;
+          max-width: 300px;
+          transition: opacity 0.3s ease-in-out;
+        `;
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+        
+        // Fade out and remove
+        setTimeout(() => {
+          toast.style.opacity = "0";
+          setTimeout(() => toast.remove(), 300);
+        }, dur - 300);
+      },
+      args: [message, duration]
+    });
+  } catch (error) {
+    console.error("Error showing toast:", error);
+  }
+}
+
+/**
+ * Clear all parked links without opening them
+ */
+export async function clearParkedLinks(): Promise<void> {
+  await setStorage({ parkedLinks: [] });
+} 
+
+# ./src/api/storageApi.ts
+################################################################################
+import { FocusSettings, StorageData as TypesStorageData, FocusState, UrlPatternOverride } from "../types/index";
+
+// Re-export the StorageData interface from types/index.d.ts
+export type StorageData = TypesStorageData;
+
+/**
+ * Get an object containing the requested keys.
+ */
+export function getStorage<T extends keyof StorageData>(
+  keys: T[]
+): Promise<Pick<StorageData, T>> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, (result) => {
+      if (chrome.runtime.lastError) {
+        return reject(chrome.runtime.lastError);
+      }
+      resolve(result as Pick<StorageData, T>);
+    });
+  });
+}
+
+/**
+ * Set or update the given keys in storage.
+ */
+export function setStorage(data: Partial<StorageData>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(data, () => {
+      if (chrome.runtime.lastError) {
+        return reject(chrome.runtime.lastError);
+      }
+      resolve();
+    });
+  });
+}
+
+/**
+ * Add a context entry to history
+ */
+export async function addContextToHistory(
+  context: string,
+  url: string,
+  confidence: number
+): Promise<void> {
+  const { contextHistory } = await getStorage(["contextHistory"]);
+  const newHistory = contextHistory || [];
+  
+  // Add new entry
+  newHistory.push({
+    context,
+    url,
+    timestamp: Date.now(),
+    confidence
+  });
+  
+  // Limit history size
+  if (newHistory.length > 100) {
+    newHistory.shift();
+  }
+  
+  await setStorage({ contextHistory: newHistory });
+}
+
+/**
+ * Get the current focus state
+ */
+export async function getFocusState(): Promise<FocusState> {
+  const { focusState } = await getStorage(["focusState"]);
+  
+  // Default state if none exists
+  const defaultState: FocusState = {
+    active: false,
+    allowedContexts: []
+  };
+  
+  return { ...defaultState, ...focusState };
+}
+
+/**
+ * Update the focus state
+ */
+export async function setFocusState(partialState: Partial<FocusState>): Promise<void> {
+  const currentState = await getFocusState();
+  await setStorage({ 
+    focusState: { ...currentState, ...partialState }
+  });
+}
+
+/**
+ * Get all URL pattern overrides
+ */
+export async function getUrlPatternOverrides(): Promise<UrlPatternOverride[]> {
+  const { urlPatternOverrides = [] } = await getStorage(["urlPatternOverrides"]);
+  return urlPatternOverrides;
+}
+
+/**
+ * Add a new URL pattern override
+ */
+export async function addUrlPatternOverride(override: Omit<UrlPatternOverride, 'createdAt'>): Promise<void> {
+  const overrides = await getUrlPatternOverrides();
+  
+  const newOverride: UrlPatternOverride = {
+    ...override,
+    createdAt: Date.now()
+  };
+  
+  // Add the new override and sort by priority (highest first)
+  overrides.push(newOverride);
+  overrides.sort((a, b) => b.priority - a.priority);
+  
+  await setStorage({ urlPatternOverrides: overrides });
+}
+
+/**
+ * Remove a URL pattern override by pattern
+ */
+export async function removeUrlPatternOverride(pattern: string): Promise<void> {
+  const overrides = await getUrlPatternOverrides();
+  const filtered = overrides.filter(o => o.pattern !== pattern);
+  await setStorage({ urlPatternOverrides: filtered });
+}
+
+/**
+ * Find a matching URL pattern override for a given URL
+ * Returns the highest priority match or null if no match
+ */
+export async function findMatchingUrlPatternOverride(url: string): Promise<UrlPatternOverride | null> {
+  const overrides = await getUrlPatternOverrides();
+  
+  // Sort by priority (highest first) to ensure we get the highest priority match
+  overrides.sort((a, b) => b.priority - a.priority);
+  
+  for (const override of overrides) {
+    if (doesUrlMatchPattern(url, override)) {
+      return override;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Check if a URL matches a pattern override
+ */
+function doesUrlMatchPattern(url: string, override: UrlPatternOverride): boolean {
+  try {
+    const { pattern, matchType } = override;
+    
+    switch (matchType) {
+      case 'exact':
+        return url === pattern;
+      case 'startsWith':
+        // tolerate patterns saved without the scheme
+        return (
+          url.startsWith(pattern) ||
+          url.replace(/^https?:\/\//, '').startsWith(pattern.replace(/^https?:\/\//, ''))
+        );
+      default:
+        console.warn(`Unsupported match type: ${matchType}`);
+        return false;
+    }
+  } catch (e) {
+    console.error('Error matching URL pattern:', e);
+    return false;
+  }
+}
+
+# ./src/api/tabsApi.ts
+################################################################################
+import { pickColorForContext } from "../lib/pickColor";
+
+export async function groupTabByContext(tabId: number, context: string): Promise<void> {
+  const groups = await chrome.tabGroups.query({});
+  let existingGroup = groups.find((grp) => grp.title === context);
+
+  if (!existingGroup) {
+    // Create new group if none match
+    const newGroupId = await chrome.tabs.group({ tabIds: [tabId] });
+    existingGroup = await chrome.tabGroups.update(newGroupId, {
+      title: context,
+      color: pickColorForContext(context),
+    });
+  } else {
+    // Add to existing group
+    await chrome.tabs.group({ groupId: existingGroup.id, tabIds: [tabId] });
+  }
+}
+
+export function onTabRemoved(callback: (tabId: number) => void): void {
+  chrome.tabs.onRemoved.addListener(callback);
+}
+
+/** Ungroup every tab in every window */
+export async function ungroupAllTabs(): Promise<void> {
+  const groups = await chrome.tabGroups.query({});
+  for (const g of groups) {
+    const tabs = await chrome.tabs.query({ groupId: g.id });
+    if (tabs.length) {
+      await chrome.tabs.ungroup(tabs.map(t => t.id!));
+    }
+  }
+}
+
+# ./src/api/feedbackApi.ts
+################################################################################
+/**
+ * Feedback API - Functionality for storing and retrieving user feedback on context classifications
+ */
+
+import { getStorage, setStorage, addUrlPatternOverride } from "./storageApi";
+import { ClassificationFeedback } from "../types/index";
+import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
+import { UrlPatternOverride } from "../types/index";
+
+// Multi-purpose domains that should use URL pattern matching rather than domain-wide overrides
+const MULTI_PURPOSE_DOMAINS = [
+  "google.com", "youtube.com", "reddit.com", "amazon.com", "twitter.com", 
+  "facebook.com", "instagram.com", "linkedin.com", "github.com", "medium.com"
+];
+
+/**
+ * Submit feedback about a classification
+ */
+export async function submitFeedback(
+  url: string,
+  predictedContext: string,
+  correctedContext: string,
+  source: string,
+  overrideType?: "domain" | "url-pattern"
+): Promise<{ success: boolean, isMultiPurposeDomain?: boolean }> {
+  try {
+    const domain = extractDomain(url);
+    
+    // Check if this is a multi-purpose domain
+    const isMultiPurposeDomain = MULTI_PURPOSE_DOMAINS.some(
+      mpd => domain.includes(mpd)
+    );
+    
+    // If override type isn't explicitly specified and this is a multi-purpose domain
+    // only send a feedback event (don't create an override yet)
+    if (!overrideType && isMultiPurposeDomain) {
+      await chrome.runtime.sendMessage({
+        type: "FEEDBACK_SUBMITTED",
+        payload: {
+          url,
+          domain,
+          predictedContext,
+          correctedContext,
+          source,
+          skipDomainOverride: true
+        }
+      });
+      
+      return { success: true, isMultiPurposeDomain: true };
+    }
+    
+    // If URL pattern override is explicitly requested, create it
+    if (overrideType === "url-pattern") {
+      // Create a simplified URL pattern based on hostname and pathname only
+      try {
+        const u = new URL(url);
+        let pattern = `${u.origin}${u.pathname}`;
+        let matchType: UrlPatternOverride['matchType'] = 'exact';
+
+        if (u.hostname.endsWith('google.com') && u.pathname === '/search') {
+          const q = u.searchParams.get('q');
+          if (q) {
+            // URLSearchParams encodes spaces as "+" – exactly how Chrome emits them
+            pattern += `?${new URLSearchParams({ q }).toString()}`;
+            // other tracking params (&hl=en, &sourceid=chrome …) may be added later,
+            // so use a starts‑with rule instead of exact
+            matchType = 'startsWith';
+          }
+        }
+        
+        await addUrlPatternOverride({
+          pattern,
+          context: correctedContext,
+          priority: 100,
+          matchType,
+          description: `Override for ${pattern} (from feedback)`
+        });
+        
+        console.log(`[Feedback] Created URL pattern override: ${pattern} → ${correctedContext}`);
+      } catch (err) {
+        console.error("[Feedback] Error creating URL pattern:", err);
+      }
+    }
+    
+    // Always send the feedback event
+    await chrome.runtime.sendMessage({
+      type: "FEEDBACK_SUBMITTED",
+      payload: {
+        url,
+        domain,
+        predictedContext,
+        correctedContext,
+        source,
+        skipDomainOverride: overrideType === "url-pattern" // Don't update domain map if using pattern
+      }
+    });
+    
+    return { success: true, isMultiPurposeDomain };
+  } catch (error) {
+    console.error("Error submitting feedback:", error);
+    return { success: false };
+  }
+}
+
+/**
+ * Get all classification feedback from storage
+ * @returns Promise resolving with array of feedback items
+ */
+export async function getFeedbackHistory(): Promise<ClassificationFeedback[]> {
+  const { classificationFeedbackLog = [] } = await getStorage(["classificationFeedbackLog"]);
+  return classificationFeedbackLog;
+}
+
+/**
+ * Clear all feedback history
+ * @returns Promise resolving when operation is complete
+ */
+export async function clearFeedbackHistory(): Promise<void> {
+  await setStorage({ classificationFeedbackLog: [] });
+}
+
+/**
+ * Get a summary of feedback statistics
+ * @returns Promise resolving with statistics object
+ */
+export async function getFeedbackStatistics(): Promise<{
+  totalFeedback: number;
+  mostCommonCorrections: Array<{
+    from: string;
+    to: string;
+    count: number;
+  }>;
+  domains: { [domain: string]: number };
+  sources: { [source: string]: number };
+}> {
+  const feedbackItems = await getFeedbackHistory();
+  
+  // Initialize stats
+  const stats = {
+    totalFeedback: feedbackItems.length,
+    mostCommonCorrections: [] as Array<{ from: string; to: string; count: number }>,
+    domains: {} as { [domain: string]: number },
+    sources: {} as { [source: string]: number }
+  };
+  
+  // Skip if no feedback
+  if (feedbackItems.length === 0) {
+    return stats;
+  }
+  
+  // Count occurrences by domain and source
+  const corrections: { [key: string]: number } = {};
+  
+  feedbackItems.forEach(item => {
+    // Count domains
+    stats.domains[item.domain] = (stats.domains[item.domain] || 0) + 1;
+    
+    // Count sources
+    stats.sources[item.source] = (stats.sources[item.source] || 0) + 1;
+    
+    // Count corrections (only if they're different)
+    if (item.predictedContext !== item.correctedContext) {
+      const key = `${item.predictedContext} → ${item.correctedContext}`;
+      corrections[key] = (corrections[key] || 0) + 1;
+    }
+  });
+  
+  // Sort corrections by count
+  stats.mostCommonCorrections = Object.entries(corrections)
+    .map(([key, count]) => {
+      const [from, to] = key.split(' → ');
+      return { from, to, count };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5); // Top 5 corrections
+  
+  return stats;
+} 
+
+# ./src/background/blockingRules.ts
+################################################################################
+/**
+ * Declarative Net Request rules for efficient content blocking
+ */
+import { getFocusState, getUrlPatternOverrides } from "../api/storageApi";
+import { UrlPatternOverride } from "../types/index";
+
+// Constants
+const RULE_ID_OFFSET = 100;
+const MAX_DNR_RULES = 5000;
+const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
+
+/**
+ * Apply allowed contexts as declarative blocking rules
+ * 
+ * This function takes the current allowed contexts and creates dynamic DNR rules
+ * to block all requests to domains that are categorized outside those contexts.
+ */
+export async function applyAllowedContexts(): Promise<void> {
+  try {
+    // Get the current focus state
+    const focusState = await getFocusState();
+    
+    // If focus is not active, remove all rules
+    if (!focusState.active) {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: await getCurrentRuleIds()
+      });
+      return;
+    }
+    
+    // Get domains classified by context
+    const { domainContextMap } = await chrome.storage.local.get('domainContextMap') as { 
+      domainContextMap: Record<string, string> 
+    };
+    
+    if (!domainContextMap) {
+      console.warn("No domain context map found, cannot create blocking rules");
+      return;
+    }
+    
+    // Group domains by context
+    const domainsByContext: Record<string, string[]> = {};
+    for (const [domain, context] of Object.entries(domainContextMap)) {
+      if (!domainsByContext[context]) {
+        domainsByContext[context] = [];
+      }
+      domainsByContext[context].push(domain);
+    }
+    
+    // Create rules for each blocked context
+    const rules: chrome.declarativeNetRequest.Rule[] = [];
+    const blockedContexts = getAllKnownContexts().filter(
+      ctx => !focusState.allowedContexts.includes(ctx)
+    );
+    
+    let ruleId = RULE_ID_OFFSET;
+    
+    // ──────────────────────────────────────────────────────────────
+    // STEP 0 – allow rules for URL‑pattern overrides that map to an
+    //          *allowed* context. These rules stop the redirect loop.
+    // ──────────────────────────────────────────────────────────────
+    const PRIORITY_ALLOW = 1000;   // highest wins
+
+    try {
+      const urlPatternOverrides = await getUrlPatternOverrides();
+
+      for (const ov of urlPatternOverrides) {
+        if (!focusState.allowedContexts.includes(ov.context)) continue; // only if allowed
+
+        const urlFilter = createDnrUrlFilter(ov);
+        if (!urlFilter) continue;
+
+        rules.push({
+          id: ruleId++,
+          priority: PRIORITY_ALLOW,
+          action: { type: chrome.declarativeNetRequest.RuleActionType.ALLOW },
+          condition: {
+            urlFilter,
+            resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+          }
+        });
+      }
+    } catch (err) {
+      console.error("[DNR] Error adding allow‑rules:", err);
+    }
+    
+    // 1. First add domain-level rules (lower priority)
+    const MULTI_PURPOSE = ["google.com","youtube.com","reddit.com","amazon.com",
+                           "twitter.com","facebook.com","instagram.com","linkedin.com",
+                           "github.com","medium.com"];
+
+    for (const context of blockedContexts) {
+      const domains = (domainsByContext[context] || [])
+        .filter(d => !MULTI_PURPOSE.some(mpd => d.endsWith(mpd)));
+      
+      // Skip if no domains in this context
+      if (domains.length === 0) continue;
+      
+      // Add a rule for this context
+      rules.push({
+        id: ruleId++,
+        priority: 1, // Lower priority than URL pattern rules
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+          redirect: { url: BLOCKED_PAGE_URL }
+        },
+        condition: {
+          requestDomains: domains,
+          resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
+          // Exclude all extensions and localhost from blocking
+          excludedInitiatorDomains: ['localhost', 'chrome-extension'],
+          // Only apply to new navigations, not history navigations
+          domainType: chrome.declarativeNetRequest.DomainType.FIRST_PARTY
+        }
+      });
+      
+      // DNR has a rule limit, so break if we hit it
+      if (rules.length >= MAX_DNR_RULES) {
+        console.warn(`Hit DNR rule limit of ${MAX_DNR_RULES}`);
+        break;
+      }
+    }
+    
+    // 2. Now add URL pattern override rules (higher priority)
+    try {
+      const urlPatternOverrides = await getUrlPatternOverrides();
+      
+      // Filter to only include patterns for blocked contexts
+      const blockedPatterns = urlPatternOverrides.filter(
+        pattern => blockedContexts.includes(pattern.context)
+      );
+      
+      console.log(`[DNR] Processing ${blockedPatterns.length} URL pattern overrides for blocked contexts`);
+      
+      for (const pattern of blockedPatterns) {
+        // Convert the pattern to a RegExp pattern suitable for DNR's urlFilter
+        const urlFilter = createDnrUrlFilter(pattern);
+        
+        if (!urlFilter) {
+          console.warn(`[DNR] Could not create valid URL filter for pattern: ${pattern.pattern}`);
+          continue;
+        }
+        
+        rules.push({
+          id: ruleId++,
+          priority: 2, // Higher priority than domain-level rules
+          action: { 
+            type: chrome.declarativeNetRequest.RuleActionType.REDIRECT, 
+            redirect: { url: BLOCKED_PAGE_URL } 
+          },
+          condition: {
+            urlFilter,
+            resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+          }
+        });
+        
+        // DNR has a rule limit, so break if we hit it
+        if (rules.length >= MAX_DNR_RULES) {
+          console.warn(`Hit DNR rule limit of ${MAX_DNR_RULES}`);
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("[DNR] Error processing URL pattern overrides:", error);
+    }
+    
+    // 3. Add legacy path-level overrides if any exist
+    try {
+      const { pathOverrides = [] } = await chrome.storage.local.get('pathOverrides') as { 
+        pathOverrides: string[] 
+      };
+      
+      // Add each path override as a separate rule
+      for (const overridePath of pathOverrides) {
+        rules.push({
+          id: ruleId++,
+          priority: 2, // Higher priority than domain rules
+          action: { 
+            type: chrome.declarativeNetRequest.RuleActionType.REDIRECT, 
+            redirect: { url: BLOCKED_PAGE_URL } 
+          },
+          condition: {
+            urlFilter: `|${overridePath}|`,
+            resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+          }
+        });
+        
+        // DNR has a rule limit, so break if we hit it
+        if (rules.length >= MAX_DNR_RULES) {
+          console.warn(`Hit DNR rule limit of ${MAX_DNR_RULES}`);
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("[DNR] Error processing legacy path overrides:", error);
+    }
+    
+    // Apply the rules
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: await getCurrentRuleIds(),
+      addRules: rules
+    });
+    
+    console.log(`[DNR] Applied ${rules.length} blocking rules for ${blockedContexts.length} contexts`);
+  } catch (error) {
+    console.error("Error applying DNR rules:", error);
+  }
+}
+
+/**
+ * Convert a URL pattern override to a DNR urlFilter
+ */
+function createDnrUrlFilter(pattern: UrlPatternOverride): string | null {
+  try {
+    switch (pattern.matchType) {
+      case 'exact':
+        return `|${pattern.pattern}|`;
+      
+      case 'startsWith':
+        return `|${pattern.pattern}`;
+      
+      default:
+        console.warn(`[DNR] Unsupported match type: ${pattern.matchType}`);
+        return null;
+    }
+  } catch (error) {
+    console.error(`[DNR] Error creating URL filter for pattern: ${pattern.pattern}`, error);
+    return null;
+  }
+}
+
+/**
+ * Get current active rule IDs
+ */
+async function getCurrentRuleIds(): Promise<number[]> {
+  const rules = await chrome.declarativeNetRequest.getDynamicRules();
+  return rules.map(rule => rule.id);
+}
+
+/**
+ * Get all known context categories
+ */
+function getAllKnownContexts(): string[] {
+  return [
+    "Work", "Development", "Research", "Learning", 
+    "Entertainment", "Social", "Shopping", "News"
+  ];
+} 
+
+# ./src/background/index.ts
+################################################################################
+import { groupTabByContext, onTabRemoved, ungroupAllTabs } from "../api/tabsApi";
+import { getStorage, setStorage, getFocusState, setFocusState, findMatchingUrlPatternOverride } from "../api/storageApi";
+import { checkFocusStatus, showFocusNotification } from "../api/focusApi";
+import { classifyPageContext } from "../lib/contextEngine";
+import { extractDomain, DOMAIN_CATEGORIES } from "../lib/contextEngine/urlAnalyzer";
+import { saveForLater, releaseParkedLinks, goBackOrClose } from "../api/parkedLinksApi";
+import * as focusEngine from "../lib/focusEngine";
+import { applyAllowedContexts } from "./blockingRules";
+import { ClassificationFeedback } from "../types/index";
+
+const tabContextMap: Record<number, string> = {};
+const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
+// Track tabs that just came from the blocked page to prevent redirect loops
+const recentlyUnblockedTabs = new Set<number>();
+
+/**
+ * Initialize the extension with proper default settings
+ */
+async function initExtension(): Promise<void> {
+  // Always enable the extension
+  await setStorage({ extensionEnabled: true });
+  
+  console.log("[Background] Extension enabled.");
+  
+  // Pre-seed domain context map with known categories
+  await chrome.storage.local.set({ domainContextMap: DOMAIN_CATEGORIES });
+  
+  // Check for active sessions - now using the new focusState
+  const focusState = await getFocusState();
+  if (focusState.active) {
+    console.log("[Background] Focus session was active at shutdown, verifying...");
+    // Verify session is still valid (not expired)
+    if (!focusState.endTime || focusState.endTime <= Date.now()) {
+      console.log("[Background] Focus session expired during shutdown, cleaning up");
+      await setFocusState({ active: false, endTime: undefined });
+    } else {
+      console.log(`[Background] Focus session continues until ${new Date(focusState.endTime).toLocaleTimeString()}`);
+      
+      // Apply blocking rules for active focus session
+      await applyAllowedContexts();
+    }
+  } else {
+    // Apply blocking rules even if no active session to create initial rules
+    await applyAllowedContexts();
+  }
+  
+  // Set up periodic checks
+  setupPeriodicChecks();
+  
+  // one‑time cleanup of multi‑purpose domains in domainContextMap
+  (async () => {
+    const { domainContextMap = {} } = await chrome.storage.local.get("domainContextMap");
+    const MULTI_PURPOSE = ["google.com","youtube.com","reddit.com","amazon.com",
+                           "twitter.com","facebook.com","instagram.com","linkedin.com",
+                           "github.com","medium.com"];
+    let changed = false;
+    for (const d of Object.keys(domainContextMap)) {
+      if (MULTI_PURPOSE.some(mpd => d.endsWith(mpd))) {
+        delete domainContextMap[d];
+        changed = true;
+      }
+    }
+    if (changed) await chrome.storage.local.set({ domainContextMap });
+  })();
+}
+
+/**
+ * Set up all periodic checks needed for the extension
+ */
+function setupPeriodicChecks() {
+  // Set up alarms for periodic checks - minimum 1 minute for MV3
+  chrome.alarms.create('focusTick', { periodInMinutes: 1 });     // 60s - check session status
+  chrome.alarms.create('focusDrift', { periodInMinutes: 2 });    // 120s - check drift (less urgent)
+  
+  // Handle alarms
+  chrome.alarms.onAlarm.addListener(async ({ name }) => {
+    try {
+      if (name === 'focusTick') {
+        await checkFocusSessionStatus();
+      } else if (name === 'focusDrift') {
+        const isSessionActive = await focusEngine.isActive();
+        if (isSessionActive) {
+          const focusStatus = await checkFocusStatus();
+          if (focusStatus.isLostFocus) {
+            // Immediately send a drift warning if focus is lost
+            await sendDriftWarning(focusStatus);
+          }
+        }
+      }
+      // Update badge for all alarm types
+      await updateBadge();
+    } catch (err) {
+      console.error(`Error in alarm handler (${name}):`, err);
+    }
+  });
+}
+
+/**
+ * Handle messages from content scripts and the UI
+ */
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === "CONTEXT_UPDATE" || request.type === "CONTEXT_DETECTED") {
+    const context = request.context as string;
+    const tabId = sender.tab?.id;
+    
+    if (tabId != null) {
+      // Check if context has changed
+      const previousContext = tabContextMap[tabId];
+      if (previousContext !== context) {
+        // Notify focus mode about context change
+        // handleContextChange(context);
+      }
+      
+      tabContextMap[tabId] = context;
+      
+      // Store additional context data if available
+      const contextData = {
+        context,
+        confidence: request.confidence,
+        secondaryContexts: request.secondaryContexts,
+        url: request.url
+      };
+      
+      // Save context data to storage for URL blocking functionality
+      chrome.storage.local.set({
+        [request.url]: { context: request.context, confidence: request.confidence }
+      });
+      
+      // Handle the context update
+      handleContextUpdate(tabId, context, contextData).catch((err) => console.error(err));
+    }
+    
+    return false; // No response needed
+  } 
+  else if (request.type === "FOCUS_TOGGLE") {
+    toggleFocusMode(request.enabled).catch((err) => console.error(err));
+    return false; // No response needed
+  }
+  else if (request.type === "START_FOCUS_SESSION") {
+    const { durationMinutes, allowedContexts } = request.payload || {};
+    
+    // Use allowedContexts directly if provided, otherwise fallback to blockedCategories
+    if (allowedContexts) {
+      focusEngine.start(allowedContexts, durationMinutes)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error(err);
+          sendResponse({ success: false, error: err.message });
+        });
+    } else {
+      // Legacy support: convert blockedCategories to allowedContexts
+      const { blockedCategories } = request.payload || {};
+      const KNOWN_CONTEXTS = [
+        "Work", "Development", "Research", "Learning",
+        "Entertainment", "Social", "Shopping", "News"
+      ];
+      const allowedContexts = KNOWN_CONTEXTS.filter(
+        ctx => !blockedCategories?.includes(ctx)
+      );
+      
+      focusEngine.start(allowedContexts, durationMinutes)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error(err);
+          sendResponse({ success: false, error: err.message });
+        });
+    }
+    return true; // Indicates async response
+  }
+  else if (request.type === "END_FOCUS_SESSION") {
+    const { saveWorkspaceName } = request.payload || {};
+    focusEngine.end(saveWorkspaceName)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error("Error ending focus session:", err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "GET_FOCUS_TIME_LEFT") {
+    focusEngine.getTimeLeft()
+      .then(seconds => {
+        sendResponse({ seconds });
+      })
+      .catch(error => {
+        console.error("Error getting focus time left:", error);
+        sendResponse({ seconds: 0 });
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "RESTORE_WORKSPACE") {
+    const { name } = request.payload || {};
+    focusEngine.restoreWorkspace(name)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error(err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true; // Indicates async response
+  }
+  else if (request.type === "CHECK_FOCUS_STATUS") {
+    checkFocusStatus()
+      .then(result => sendResponse(result))
+      .catch(error => {
+        console.error("Error checking focus status:", error);
+        sendResponse(null);
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "CONTENT_SCRIPT_READY") {
+    // Content script is ready to receive messages
+    const tabId = sender.tab?.id;
+    // if (tabId && activeTimer && activeTimer.active && activeTimer.endTime > Date.now()) {
+    //   console.log(`Tab ${tabId} is ready, sending active timer`);
+    //   // Send the timer right away
+    //   chrome.tabs.sendMessage(tabId, {
+    //     type: "RESTORE_FOCUS_TIMER",
+    //     timerState: activeTimer
+    //   }).catch(err => {
+    //     console.log('Tab not fully ready, will retry');
+    //     // Try again after a short delay
+    //     setTimeout(() => {
+    //       chrome.tabs.sendMessage(tabId, {
+    //         type: 'RESTORE_FOCUS_TIMER',
+    //         timerState: activeTimer
+    //       }).catch(err => console.error('Failed to restore timer after content script ready retry:', err));
+    //     }, 500);
+    //   });
+    // }
+    sendResponse({ success: true });
+    return true;
+  }
+  else if (request.type === "TIMER_EXPIRED") {
+    // Handle timer expiration from the side panel
+    // endFocusTimer();
+    // Show a drift warning on the current page
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0] && tabs[0].id) {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: "DRIFT_WARNING",
+          message: "Time's up! Return to your primary task now."
+        }, (resp) => {
+          if (chrome.runtime.lastError || resp === undefined) {
+            // Nobody listened - fall back to the blocked page
+            chrome.tabs.update(tabs[0].id!, {url: BLOCKED_PAGE_URL});
+          }
+        });
+      }
+    });
+    sendResponse({ success: true });
+    return true;
+  }
+  else if (request.type === "PARK_LINK") {
+    const { url, context, title } = request;
+    
+    // Handle the parked link asynchronously
+    (async () => {
+      try {
+        await saveForLater(url, context, title);
+        console.log(`[Parked Links] Saved for later: ${title || url} (${context})`);
+      } catch (error) {
+        console.error("Error parking link:", error);
+      }
+    })();
+    
+    return false; // No response needed
+  }
+  else if (request.type === "RELEASE_PARKED_LINKS") {
+    // Handle the release of parked links asynchronously
+    (async () => {
+      try {
+        await releaseParkedLinks();
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error("Error releasing parked links:", error);
+        sendResponse({ success: false, error: String(error) });
+      }
+    })();
+    
+    return true; // Indicates async response
+  }
+  else if (request.type === "TRAIN_CONTEXT") {
+    (async () => {
+      const { url, title, actualContext, predictedContext, isFalsePositive } = request;
+      
+      // Get or create context data for this URL
+      const contextData = await getContextData(url);
+      
+      // Update training data
+      if (!contextData.training) {
+        contextData.training = {
+          falsePositives: [],
+          truePositives: []
+        };
+      }
+      
+      if (isFalsePositive) {
+        contextData.training.falsePositives.push({
+          timestamp: Date.now(),
+          actualContext,
+          predictedContext
+        });
+      } else {
+        contextData.training.truePositives.push({
+          timestamp: Date.now(),
+          actualContext,
+          predictedContext
+        });
+      }
+      
+      // Save updated context data
+      await saveContextData(url, contextData);
+      
+      // Recalculate context weights based on training data
+      await updateContextWeights(url);
+      
+      sendResponse({ success: true });
+    })();
+    return true; // Required for async response
+  }
+  else if (request.type === "STAY_FOCUSED_ACTION") {
+    (async () => {
+      const { url, context, title } = request.payload;
+      try {
+        await saveForLater(url, context, title);
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) await goBackOrClose(tab.id);
+        sendResponse({ success: true });
+      } catch (e: unknown) {
+        console.error("Stay‑focused flow failed:", e);
+        sendResponse({ 
+          success: false, 
+          error: e instanceof Error ? e.message : String(e)
+        });
+      }
+    })();
+    return true;
+  }
+  else if (request.type === "FOCUS_STATUS") {
+    // Return the current focus state to the popup
+    getFocusState()
+      .then(focusState => sendResponse(focusState))
+      .catch(error => {
+        console.error("Error getting focus status:", error);
+        sendResponse(null);
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "FEEDBACK_SUBMITTED") {
+    (async () => {
+      const { url, domain, predictedContext, correctedContext, source, skipDomainOverride } = request.payload;
+      console.log(`[Feedback Handler] Received for ${domain}: Predicted=${predictedContext}, Corrected=${correctedContext}`);
+
+      try {
+        // 1. Update the domainContextMap (this is the primary "training")
+        const storage = await chrome.storage.local.get(["domainContextMap", "classificationFeedbackLog", "urlPatternOverrides"]); // Ensure urlPatternOverrides is fetched if needed
+        const domainContextMap = storage.domainContextMap || {};
+        
+        const MULTI_PURPOSE = [
+          "google.com","youtube.com","reddit.com","amazon.com","twitter.com",
+          "facebook.com","instagram.com","linkedin.com","github.com","medium.com"
+        ];
+        
+        // Only update the domain map if not explicitly skipped (for URL pattern overrides)
+        // AND not a multi-purpose domain
+        if (
+          !skipDomainOverride &&
+          !domain.startsWith(chrome.runtime.id) &&          // chrome‑extension://…
+          !domain.startsWith("chrome-extension") &&
+          !MULTI_PURPOSE.some(mpd => domain.endsWith(mpd))
+        ) {
+          domainContextMap[domain] = correctedContext;
+          await setStorage({ domainContextMap });
+          console.log(`[Feedback Handler] Updated domainContextMap for ${domain} to ${correctedContext}`);
+        } else {
+          console.log(`[Feedback Handler] Skipping domainContextMap update for ${domain}.`);
+        }
+
+        // 2. Log the feedback event (for auditing/future use)
+        const feedbackLog: ClassificationFeedback[] = storage.classificationFeedbackLog || [];
+        feedbackLog.push({
+          url,
+          domain,
+          timestamp: Date.now(),
+          predictedContext,
+          correctedContext,
+          source
+        });
+        // Optional: Limit log size
+        if (feedbackLog.length > 200) {
+            feedbackLog.shift(); // Remove oldest entry
+        }
+        await setStorage({ classificationFeedbackLog: feedbackLog });
+
+        // 3. *** CRUCIAL: Await rule application ***
+        await applyAllowedContexts(); // Wait for the update request to be processed
+        console.log(`[Feedback Handler] DNR rule update requested after feedback for ${domain}`);
+
+        // 4. Send success response *after* rule update request
+        sendResponse({ success: true });
+      } catch (err) {
+        console.error("[Feedback Handler] Error processing feedback:", err);
+        sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    })();
+    return true; // Indicates async response
+  }
+  else if (request.type === "CONTEXT_OVERRIDE") {
+    (async () => {
+      console.log(`Context override message received for domain: ${request.domain}`);
+      // The map update and rule application should have happened via FEEDBACK_SUBMITTED.
+      // If not, we might need to trigger rule update here too, but let's rely on FEEDBACK_SUBMITTED.
+      // await applyAllowedContexts(); // Removed - should be done by FEEDBACK_SUBMITTED handler
+      sendResponse({ success: true });
+    })();
+    return true;
+  }
+  else if (request.type === "SETTINGS_UPDATED") {
+    (async () => {
+      console.log("[Settings] Settings updated, re-applying DNR rules.");
+      await applyAllowedContexts(); // Rebuild rules based on potentially changed overrides
+      sendResponse({ success: true });
+    })();
+    return true;
+  }
+  else if (request.type === "REQUEST_NAVIGATION") {
+    (async () => {
+      const { tabId, url } = request.payload;
+      if (!tabId || !url) {
+        console.error("[REQUEST_NAVIGATION] Missing tabId or url in request payload:", request.payload);
+        sendResponse({ success: false, error: "Missing tabId or url" });
+        return;
+      }
+      console.log(`[REQUEST_NAVIGATION] Received request to navigate tab ${tabId} to ${url}`);
+      try {
+        // Check if tab still exists before navigating
+        await chrome.tabs.get(tabId);
+        await chrome.tabs.update(tabId, { url });
+        console.log(`[REQUEST_NAVIGATION] Navigation successful for tab ${tabId}`);
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error(`[REQUEST_NAVIGATION] Error navigating tab ${tabId} to ${url}:`, error);
+        // Tab might have been closed, or URL might be invalid
+        sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return true; // Indicates async response
+  }
+  return false; // No response needed for other messages
+});
+
+/**
+ * Handle any focus mode toggle (enable/disable)
+ */
+async function toggleFocusMode(enabled: boolean): Promise<void> {
+  // This is a legacy function, but we'll keep it for compatibility with older UIs
+  if (enabled) {
+    // Legacy function, start with default settings
+    await focusEngine.start(["Work", "Development", "Research", "Learning"]);
+    
+    // Apply DNR blocking rules
+    await applyAllowedContexts();
+  } else {
+    // Turn off focus mode
+    await focusEngine.end();
+    
+    // Remove all blocking rules
+    await applyAllowedContexts();
+  }
+}
+
+/**
+ * Handle context update with enhanced data
+ */
+async function handleContextUpdate(
+  tabId: number, 
+  context: string, 
+  contextData?: any
+): Promise<void> {
+  const { autoGroupEnabled = true } = await getStorage(["autoGroupEnabled"]);
+  if (!autoGroupEnabled) return;
+
+  const url = contextData?.url || "";
+  const domain = extractDomain(url);
+  const { domainContextMap = {} } =
+    await chrome.storage.local.get("domainContextMap") as { domainContextMap: Record<string,string> };
+
+  // Check for URL pattern override first (highest priority)
+  let overriddenContext = context;
+  try {
+    const urlOverride = await findMatchingUrlPatternOverride(url);
+    if (urlOverride) {
+      console.log(`[Context] URL pattern override found for ${url}: ${urlOverride.context}`);
+      overriddenContext = urlOverride.context;
+    } else if (domain && domainContextMap[domain]) {
+      // If no URL pattern match, fall back to domain-level override
+      overriddenContext = domainContextMap[domain];
+    }
+  } catch (err) {
+    console.error("[Context] Error checking URL pattern overrides:", err);
+    // Fall back to domain map if error with pattern matching
+    overriddenContext = domain && domainContextMap[domain] ? domainContextMap[domain] : context;
+  }
+
+  // Group tab using the correct context (URL override > domain override > detected)
+  await groupTabByContext(tabId, overriddenContext);
+  updateBadge();
+  
+  // Check if the context should be blocked
+  const focusState = await getFocusState();
+  if (focusState.active && !focusState.allowedContexts.includes(overriddenContext)) {
+    const blockedUrl = chrome.runtime.getURL("blocked.html") + 
+      `?context=${encodeURIComponent(overriddenContext)}&url=${encodeURIComponent(url)}`;
+    
+    try {
+      // Check if tab still exists
+      await chrome.tabs.get(tabId);
+      await chrome.tabs.update(tabId, { url: blockedUrl });
+      console.log(`[Block] Successfully redirected tab ${tabId} to blocked page in handleContextUpdate`);
+    } catch (err) {
+      console.error(`[Block] Error redirecting in handleContextUpdate:`, err);
+    }
+  }
+}
+
+/**
+ * Updates the badge with current focus status
+ */
+async function updateBadge(): Promise<void> {
+  try {
+    const focusState = await getFocusState();
+    
+    // If not in focus mode, clear badge
+    if (!focusState.active) {
+      chrome.action.setBadgeText({ text: "" });
+      return;
+    }
+    
+    // Show a simple indicator
+    chrome.action.setBadgeText({ text: "•" });
+    chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
+  } catch (error) {
+    console.error("Error updating badge:", error);
+  }
+}
+
+/**
+ * Send a high-visibility drift warning to the active tab
+ */
+async function sendDriftWarning(focusStatus: any): Promise<void> {
+  try {
+    // Always show warnings during focus sessions regardless of notification settings
+    // This is critical - users need to be alerted when drifting
+    
+    // Check if a focus session is active
+    const isSessionActive = await focusEngine.isActive();
+    if (!isSessionActive) {
+      return; // Only show drift warnings during active focus sessions
+    }
+    
+    console.log("[Focus] Sending drift warning to active tab", focusStatus);
+    
+    // Get the active tab
+    const tabs = await chrome.tabs.query({active: true, currentWindow: true});
+    if (!tabs.length || !tabs[0].id) return;
+
+    const activeTab = tabs[0];
+    const tabId = activeTab.id as number;
+    
+    // Skip chrome:// pages and extension pages
+    if (
+      activeTab.url?.startsWith("chrome://") || 
+      activeTab.url?.startsWith("chrome-extension://")
+    ) {
+      return;
+    }
+    
+    // Create a useful message about why focus was lost
+    let message = "YOU'RE DRIFTING FROM YOUR FOCUS TASK!";
+    
+    // If we have context switches, mention the last switch
+    if (focusStatus.contextSwitches.length > 0) {
+      const lastSwitch = focusStatus.contextSwitches[focusStatus.contextSwitches.length - 1];
+      message = `FOCUS LOST: Switched from ${lastSwitch.from} to ${lastSwitch.to}`;
+    }
+    
+    // Send the warning with callback to check if handled
+    chrome.tabs.sendMessage(tabId, {
+      type: "DRIFT_WARNING",
+      message
+    }, (resp) => {
+      if (chrome.runtime.lastError || resp === undefined) {
+        // Nobody listened - fall back to the blocked page
+        chrome.tabs.update(tabId, {url: BLOCKED_PAGE_URL});
+      }
+    });
+      
+    // Also show a system notification
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+      title: 'FOCUS ALERT!',
+      message: message,
+      priority: 2,
+      requireInteraction: true
+    });
+      
+    console.log("[Focus] Drift warning sent successfully");
+  } catch (error) {
+    console.error("Error sending drift warning:", error);
+  }
+}
+
+/**
+ * Sets up blocking when a focus session is active
+ * This is a no-op now because we use DNR rules for blocking
+ */
+function setupFocusSessionUrlBlocking(): void {
+  // No action needed - DNR rules handle blocking
+}
+
+/**
+ * Check if a focus session should be ended
+ */
+async function checkFocusSessionStatus(): Promise<void> {
+  const endTime = (await getFocusState()).endTime;
+  if (endTime && Date.now() >= endTime) {
+    const active = await focusEngine.isActive();
+    if (active) {
+      // Focus session time is up
+      await focusEngine.end();
+      console.log("[Focus] Session ended automatically due to timeout");
+      
+      // Show notification to user
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+        title: 'Focus Session Complete',
+        message: `Your timed focus session has ended.`,
+      });
+    }
+  }
+}
+
+/**
+ * Cleanup in-memory reference on tab removal
+ */
+onTabRemoved((removedTabId) => {
+  delete tabContextMap[removedTabId];
+});
+
+// Function to get context data for a URL
+async function getContextData(url: string): Promise<any> {
+  const result = await chrome.storage.local.get([url]);
+  return result[url] || { contexts: [], training: { falsePositives: [], truePositives: [] } };
+}
+
+// Function to save context data for a URL
+async function saveContextData(url: string, data: any): Promise<void> {
+  await chrome.storage.local.set({ [url]: data });
+}
+
+// Function to update context weights based on training data
+async function updateContextWeights(url: string): Promise<void> {
+  const contextData = await getContextData(url);
+  const { training } = contextData;
+  
+  if (!training) return;
+  
+  // Calculate weights based on false positives and true positives
+  const weights: { [key: string]: number } = {};
+  
+  // Decrease weight for contexts that frequently cause false positives
+  training.falsePositives.forEach((fp: any) => {
+    weights[fp.predictedContext] = (weights[fp.predictedContext] || 1) * 0.9;
+  });
+  
+  // Increase weight for contexts that are frequently true positives
+  training.truePositives.forEach((tp: any) => {
+    weights[tp.predictedContext] = (weights[tp.predictedContext] || 1) * 1.1;
+  });
+  
+  // Update context weights
+  contextData.weights = weights;
+  await saveContextData(url, contextData);
+}
+
+// Add listeners for focus state changes to update DNR rules
+chrome.storage.onChanged.addListener(async (changes) => {
+  if (changes.focusState) {
+    // Focus state has changed, update DNR rules
+    await applyAllowedContexts();
+  }
+});
+
+// Block before navigation is committed
+chrome.webNavigation.onBeforeNavigate.addListener(async ({ tabId, frameId, url }) => {
+  if (frameId !== 0) return;                     // only top frame
+  
+  // Skip extension pages and about:blank
+  if (url.startsWith(chrome.runtime.getURL("")) || url === "about:blank") return;
+  
+  const focusState = await getFocusState();
+  if (!focusState.active) return;
+
+  // Check if the domain is already classified and should be blocked
+  const domain = extractDomain(url);
+  const ctxMap = (await chrome.storage.local.get("domainContextMap")).domainContextMap || {};
+  const context = ctxMap[domain];
+  
+  // Only block if we have a context and it's not allowed
+  if (context && !focusState.allowedContexts.includes(context)) {
+    console.log(`[Block] Blocking domain ${domain} with context ${context}`);
+    // Pass context and original URL as query parameters
+    const blockedUrl = chrome.runtime.getURL("blocked.html") + 
+      `?context=${encodeURIComponent(context)}&url=${encodeURIComponent(url)}`;
+    try {
+      await chrome.tabs.update(tabId, { url: blockedUrl });
+      console.log(`[Block] Successfully redirected tab ${tabId} to blocked page`);
+    } catch (err) {
+      console.error(`[Block] Error redirecting tab ${tabId} to blocked page:`, err);
+    }
+  }
+});
+
+// Set default settings on installation/update
+chrome.runtime.onInstalled.addListener(details => {
+  if (details.reason === "install") {
+    // First-time install: set defaults
+    chrome.storage.local.set({
+      extensionEnabled: true,
+      autoGroupEnabled: true, // Set auto grouping enabled by default
+      focusState: {
+        active: false,
+        allowedContexts: []
+      },
+      urlPatternOverrides: [], // Initialize empty URL pattern overrides
+      firstRunComplete: false
+    });
+    
+    // Show onboarding page
+    chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+  } else if (details.reason === "update") {
+    // Handle migration from old storage format to new
+    chrome.storage.local.get([
+      "autoGroupEnabled", // Check for this setting
+      "focusSessionActive", 
+      "focusSessionEndTime",
+      "blockedCategories",
+      "focusState",
+      "pathOverrides" // Check for legacy path overrides
+    ], async result => {
+      // Always set extension to enabled
+      const update: Record<string, any> = {
+        extensionEnabled: true
+      };
+      
+      // Migration: If we have old format data but no new focusState yet, convert it
+      if (!result.focusState && (result.focusSessionActive || result.blockedCategories)) {
+        console.log("Migrating from old focus session format to new focusState format");
+        
+        // Convert to new FocusState format (invert the block logic to allowedContexts)
+        const knownContexts = [
+          "Work", "Development", "Research", "Learning", 
+          "Entertainment", "Social", "Shopping", "News"
+        ];
+        
+        // Calculate allowed contexts by excluding blocked ones
+        const blockedCategories = result.blockedCategories || [];
+        const allowedContexts = knownContexts.filter(ctx => !blockedCategories.includes(ctx));
+        
+        update.focusState = {
+          active: result.focusSessionActive === true,
+          allowedContexts,
+          endTime: result.focusSessionEndTime || undefined
+        };
+        
+        // Remove old keys after migration
+        chrome.storage.local.remove([
+          "focusSessionActive", 
+          "focusSessionEndTime", 
+          "blockedCategories"
+        ]);
+      }
+
+      // Migrate legacy pathOverrides to new URL pattern overrides if they exist
+      const pathOverrides = result.pathOverrides || [];
+      if (pathOverrides.length > 0) {
+        console.log(`[Migration] Converting ${pathOverrides.length} path overrides to URL patterns`);
+        
+        try {
+          // Get existing URL pattern overrides or initialize empty array
+          const { urlPatternOverrides = [] } = await chrome.storage.local.get('urlPatternOverrides');
+          
+          // We'll use 'Work' as a default context since these were previously used for blocking
+          const defaultContext = "Work";
+          
+          for (const path of pathOverrides) {
+            urlPatternOverrides.push({
+              pattern: path,
+              matchType: 'startsWith',
+              priority: 100,
+              createdAt: Date.now(),
+              context: defaultContext,
+              description: `Migrated from legacy path override: ${path}`
+            });
+          }
+          
+          update.urlPatternOverrides = urlPatternOverrides;
+          
+          // Remove old pathOverrides after migration
+          await chrome.storage.local.remove(['pathOverrides']);
+          console.log(`[Migration] Successfully migrated ${pathOverrides.length} path overrides`);
+        } catch (error) {
+          console.error('[Migration] Error migrating path overrides:', error);
+        }
+      }
+      
+      // Ensure we have explicit boolean values, not undefined  
+      if (result.autoGroupEnabled === undefined) update.autoGroupEnabled = true;
+      
+      // Apply all updates
+      chrome.storage.local.set(update);
+    });
+  }
+});
+
+// Kick off on load
+initExtension().catch(console.error);
+
+# ./src/content/index.ts
+################################################################################
+/**
+ * Content script for Context Focus
+ * 
+ * This script runs on each page and does only one thing:
+ * 1. Classify the current page context
+ * 2. Send the classification to the background script
+ */
+
+import { classifyPageContext } from "../lib/contextEngine";
+
+// Keep track of last context (to avoid sending duplicate messages)
+let lastContext: string | null = null;
+
+// Reset lastContext when page is restored from bfcache
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) {
+    lastContext = null;          // force a fresh classification
+    detectAndSendContext();      // re‑emit the correct context
+  }
+});
+
+// Also reset on normal load (helps with History API navigation)
+window.addEventListener('load', () => {
+  lastContext = null;  // force a fresh classification on every page load
+});
+
+// Initialize context detection
+async function initContextDetection(): Promise<void> {
+  // Register for future DOM changes
+  setupMutationObserver();
+  
+  // Initial classification
+  await detectAndSendContext();
+}
+
+/**
+ * Set up a mutation observer to detect and send context when content changes
+ */
+function setupMutationObserver(): void {
+  // Observe changes to the page content
+  const observer = new MutationObserver(() => {
+    // Skip if document is hidden (tab not visible)
+    if (document.hidden) return;
+    
+    // Use requestIdleCallback for better performance
+    if (!contextDetectionTimer) {
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(() => scheduleContextCheck(), { timeout: 2000 });
+      } else {
+        scheduleContextCheck();
+      }
+    }
+  });
+  
+  // Start observing
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  });
+}
+
+// Timer for debouncing context detection
+let contextDetectionTimer: number | null = null;
+
+/* ------------------------------------------------------------------ */
+/*  ✦  Stop context scans while the user is editing text on the page  */
+/* ------------------------------------------------------------------ */
+
+let typing      = false;          // true ⇢ user is actively editing
+let typingTimer: number | null = null;
+
+/** activeElement is an <input>, <textarea> or contenteditable? */
+function isEditing(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName.toLowerCase();
+  return (
+    (tag === "input"  && !["checkbox","radio","button","submit"].includes((el as HTMLInputElement).type)) ||
+    tag === "textarea" ||
+    el.isContentEditable
+  );
+}
+
+/** call when we got *any* editing activity */
+function noteTypingActivity(): void {
+  typing = true;
+  if (typingTimer) clearTimeout(typingTimer);
+  // wait 1 s after the *last* activity before allowing scans again
+  typingTimer = window.setTimeout(() => { typing = false; scheduleContextCheck(); }, 1000);
+}
+
+/* 1 – key presses */
+document.addEventListener("keydown", e => {
+  if (!isEditing()) return;
+  // If user hit Enter we assume they finished the query → allow scan immediately
+  if (e.key === "Enter") {
+    typing = false;
+    if (typingTimer) clearTimeout(typingTimer);
+    scheduleContextCheck();
+  } else {
+    noteTypingActivity();
+  }
+}, true);                       // use capture to catch early
+
+/* 2 – text actually changed (covers mouse‑paste, IME etc.) */
+document.addEventListener("input", () => {
+  if (isEditing()) noteTypingActivity();
+}, true);
+
+/* 3 – when the field loses focus we're definitely done */
+document.addEventListener("blur", () => {
+  if (typing) {
+    typing = false;
+    if (typingTimer) clearTimeout(typingTimer);
+    scheduleContextCheck();
+  }
+}, true);
+
+/**
+ * Schedule a context check after a short delay (debouncing)
+ */
+function scheduleContextCheck(): void {
+  // Clear any existing timer
+  if (contextDetectionTimer) {
+    window.clearTimeout(contextDetectionTimer);
+    contextDetectionTimer = null;
+  }
+
+  // If user is typing we wait until typing stops (handled in keyup above)
+  if (typing || isEditing()) return;
+
+  // Set a new timer
+  contextDetectionTimer = window.setTimeout(async () => {
+    await detectAndSendContext();
+  }, 1000);
+}
+
+/**
+ * Extract useful data from the current page
+ */
+function extractPageData() {
+  // Get basic page info
+  const url = window.location.href;
+  const title = document.title;
+  
+  // Extract metadata
+  const metaDescription = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+  const metaKeywords = document.querySelector('meta[name="keywords"]')?.getAttribute('content')?.split(',').map(k => k.trim()) || [];
+  
+  // Extract visible text
+  const textElements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, a, span, div, li');
+  let visibleText = '';
+  
+  // Get text from the first 100 elements (for performance)
+  const maxElements = Math.min(textElements.length, 100);
+  for (let i = 0; i < maxElements; i++) {
+    const el = textElements[i];
+    const style = window.getComputedStyle(el);
+    if (style.display !== 'none' && style.visibility !== 'hidden') {
+      visibleText += el.textContent + ' ';
+      if (visibleText.length > 5000) break; // Limit text length
+    }
+  }
+  
+  return {
+    url,
+    title,
+    fullText: visibleText.trim(),
+    metaDescription,
+    metaKeywords
+  };
+}
+
+/**
+ * Detect the context of the current page and send it to the background script
+ */
+async function detectAndSendContext(): Promise<void> {
+  try {
+    if (typing) return;                // ← NEW guard
+
+    // Extract page data
+    const pageData = extractPageData();
+    
+    // Classify context
+    const contextResult = await classifyPageContext(pageData);
+    
+    // Only send if context has changed
+    if (contextResult.primaryContext !== lastContext) {
+      const previousContext = lastContext;
+      lastContext = contextResult.primaryContext;
+      
+      // Simple message with just the context and confidence
+      chrome.runtime.sendMessage({
+        type: "CONTEXT_DETECTED",
+        context: contextResult.primaryContext,
+        confidence: contextResult.confidence,
+        url: pageData.url
+      });
+      
+      // If this was a context change due to navigation back,
+      // and not the initial page load, show a toast notification
+      if (previousContext !== null && document.referrer !== "") {
+        // Create a small notification for the user
+        const toast = document.createElement("div");
+        toast.style.cssText = `
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background-color: rgba(0, 102, 204, 0.9);
+          color: white;
+          padding: 12px 20px;
+          border-radius: 4px;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+          font-family: Arial, sans-serif;
+          z-index: 2147483647;
+          max-width: 300px;
+          transition: opacity 0.3s ease-in-out;
+        `;
+        toast.textContent = `Returned to ${contextResult.primaryContext} – stay focused!`;
+        document.body.appendChild(toast);
+        
+        // Fade out and remove after 3 seconds
+        setTimeout(() => {
+          toast.style.opacity = "0";
+          setTimeout(() => toast.remove(), 300);
+        }, 2700);
+      }
+    }
+  } catch (error) {
+    console.error("Error detecting context:", error);
+  }
+}
+
+// Start context detection when the page is loaded
+(function() {
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    initContextDetection();
+  } else {
+    document.addEventListener('DOMContentLoaded', initContextDetection);
+  }
+})();
+
+// Add listener for DRIFT_WARNING messages from background script
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "DRIFT_WARNING") {
+    // remove any previous overlay
+    const old = document.getElementById("__cf_drift_overlay");
+    old?.remove();
+
+    // build a full‑screen overlay
+    const ov = document.createElement("div");
+    ov.id = "__cf_drift_overlay";
+    ov.style.cssText = `
+      position:fixed;inset:0;z-index:2147483647;
+      background:rgba(0,0,0,.85);color:#fff;display:flex;
+      flex-direction:column;align-items:center;justify-content:center;
+      font:700 32px/1.4 system-ui, sans-serif;text-align:center;
+    `;
+    ov.textContent = msg.message || "You're drifting!";
+    
+    // optional "Return" button
+    const btn = document.createElement("button");
+    btn.textContent = "Back to focus";
+    btn.style.cssText = `
+      margin-top:24px;padding:12px 24px;font-size:18px;font-weight:700;
+      border:none;border-radius:6px;cursor:pointer;background:#d32f2f;color:#fff;
+    `;
+    btn.onclick = () => ov.remove();
+    ov.appendChild(btn);
+
+    document.documentElement.appendChild(ov);
+
+    // let background know we handled it (optional)
+    return true;  // keeps the sendResponse channel open
+  }
+  
+  // Handle forced context rescan
+  if (msg.type === "FORCE_CONTEXT_RESCAN") {
+    lastContext = null;  // Reset the last context to force a fresh scan
+    detectAndSendContext();
+    return true;
+  }
+});
+
+# ./src/lib/focusEngine.ts
+################################################################################
+/**
+ * Focus Engine - Core logic for the Focus feature
+ * 
+ * This module implements the state machine for focus mode, following the principle
+ * of "block by exclusion" - where user picks ALLOWED contexts and everything else is blocked.
+ */
+
+import { getFocusState, setFocusState, getStorage, setStorage } from "../api/storageApi";
+import { FocusState } from "../types/index";
+import { openSidePanel, closeSidePanel } from "../lib/panels/sidePanelManager";
+import { launchFocusWindow, closeFocusWindow } from "../lib/windows/focusWindow";
+import { releaseParkedLinks } from "../api/parkedLinksApi";
+import { ungroupAllTabs } from "../api/tabsApi";
+
+const FOCUS_PAGE_URL = chrome.runtime.getURL("focusmode.html");
+
+/** Save every tab in every window (except chrome‑internal pages) */
+async function backupAllTabs(): Promise<void> {
+  const windows = await chrome.windows.getAll({ populate: true });
+  const backup = windows.map(w => ({
+    state: w.state,
+    focused: w.focused,
+    tabs: (w.tabs ?? []).filter((t: chrome.tabs.Tab) =>
+      t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("chrome-extension://")
+    ).map((t: chrome.tabs.Tab) => ({
+      url: t.url!,
+      pinned: t.pinned,
+      active: t.active
+    }))
+  }));
+  await setStorage({ focusBackup: backup } as any);
+}
+
+/** Recreate windows/tabs from the stored backup */
+async function restoreAllTabs(): Promise<void> {
+  const storage = await getStorage(["focusBackup" as any]);
+  const focusBackup = storage["focusBackup" as any];
+  if (!focusBackup?.length) return;
+
+  for (const w of focusBackup) {
+    const urls = w.tabs.map((t: {url: string}) => t.url);
+    if (!urls.length) continue;
+
+    const created = await chrome.windows.create({
+      url: urls,
+      state: w.state
+    });
+
+    // pin & re‑activate where needed
+    const createdTabs = await chrome.tabs.query({ windowId: created.id });
+    for (let i = 0; i < createdTabs.length; i++) {
+      const meta = w.tabs[i];
+      if (!meta) continue;
+      if (meta.pinned) await chrome.tabs.update(createdTabs[i].id!, { pinned: true });
+      if (meta.active) await chrome.tabs.update(createdTabs[i].id!, { active: true });
+    }
+  }
+
+  await setStorage({ focusBackup: [] } as any);
+}
+
+// State for tracking if a navigation was blocked recently (for badge alert)
+let recentlyBlocked = false;
+let blockClearTimer: NodeJS.Timeout | undefined;
+
+/**
+ * Start a focus session
+ * 
+ * @param allowed - Array of context categories that are allowed during focus
+ * @param durationMin - Optional duration in minutes after which focus will automatically end
+ */
+export async function start(allowed: string[], durationMin?: number): Promise<void> {
+  // Safety check for allowed contexts
+  const safeAllowed = Array.isArray(allowed) ? allowed : [];
+  
+  // Calculate end time if duration is provided
+  const endTime = durationMin ? Date.now() + durationMin * 60 * 1000 : undefined;
+  
+  await backupAllTabs();
+
+  // open a single focus page and close everything else
+  const { id: focusTabId } = await chrome.tabs.create({ url: FOCUS_PAGE_URL, active: true });
+
+  // remove all other normal tabs
+  const allTabs = await chrome.tabs.query({});
+  for (const t of allTabs) {
+    if (t.id !== focusTabId && t.id) {
+      try { await chrome.tabs.remove(t.id); } catch { /* tab gone */ }
+    }
+  }
+  
+  // Save focus state
+  await setFocusState({
+    active: true,
+    allowedContexts: safeAllowed,
+    endTime
+  });
+  
+  // Store blockedCategories for backward compatibility
+  const knownContexts = [
+    "Work", "Development", "Research", "Learning", 
+    "Entertainment", "Social", "Shopping", "News"
+  ];
+  const blockedCategories = knownContexts.filter(ctx => !safeAllowed.includes(ctx));
+  await setStorage({ blockedCategories });
+  
+  // Open the side panel for persistent timer display
+  await openSidePanel();
+  
+  // Check if focus window is enabled and launch if needed
+  const storage = await getStorage(["focusSettings"]);
+  const focusWindowEnabled = storage.focusSettings?.focusWindowEnabled || false;
+  if (focusWindowEnabled) {
+    await launchFocusWindow();
+  }
+  
+  // Set badge to show focus is active
+  chrome.action.setBadgeText({ text: "•" });
+  chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
+  
+  // Show notification
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Session Started',
+    message: durationMin ? 
+      `Focus session started for ${durationMin} minutes. Stay focused!` :
+      'Focus session started. Stay focused!',
+    priority: 2
+  });
+}
+
+/**
+ * End a focus session
+ * @param saveWorkspaceName - Optional workspace name to save current tab groups
+ */
+export async function end(saveWorkspaceName?: string): Promise<void> {
+  // If user wants to save workspace, store it
+  if (saveWorkspaceName) {
+    try {
+      // Get all tab groups
+      const groups = await chrome.tabGroups.query({});
+      // For each group, gather tab URLs
+      const workspaceGroups = await Promise.all(
+        groups.map(async (grp) => {
+          const tabs = await chrome.tabs.query({ groupId: grp.id });
+          return {
+            groupId: grp.id,
+            title: grp.title || "",
+            color: grp.color,
+            tabUrls: tabs.map(t => t.url || "")
+          };
+        })
+      );
+
+      // Store in savedWorkspaces
+      const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+      const newWorkspaceEntry = {
+        name: saveWorkspaceName,
+        tabGroups: workspaceGroups,
+        timestamp: Date.now()
+      };
+
+      const updatedWorkspaces = Array.isArray(savedWorkspaces) 
+        ? [...savedWorkspaces, newWorkspaceEntry]
+        : [newWorkspaceEntry];
+
+      await setStorage({ savedWorkspaces: updatedWorkspaces });
+    } catch (error) {
+      console.error("Error saving workspace:", error);
+    }
+  }
+  
+  // Clear focus state
+  await setFocusState({
+    active: false,
+    endTime: undefined
+  });
+  
+  // Close UI components
+  await closeSidePanel();
+  await closeFocusWindow();
+  await ungroupAllTabs();
+  
+  // Clear badge
+  chrome.action.setBadgeText({ text: "" });
+  
+  // Reset block indicator
+  recentlyBlocked = false;
+  if (blockClearTimer) {
+    clearTimeout(blockClearTimer);
+    blockClearTimer = undefined;
+  }
+  
+  // bring the old workspace back
+  await restoreAllTabs();
+  
+  // Show notification
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Session Ended',
+    message: 'Your focus session has ended. Great job!',
+    priority: 2
+  });
+  
+  // Release any links that were parked during the session
+  await releaseParkedLinks();
+}
+
+/**
+ * Check if a context should be blocked
+ * 
+ * @param context - The context category to check
+ * @returns true if the context should be blocked, false otherwise
+ */
+export async function isBlocked(context: string): Promise<boolean> {
+  const focusState = await getFocusState();
+  
+  // If focus is not active, nothing is blocked
+  if (!focusState.active) {
+    return false;
+  }
+  
+  // Safety check: ensure allowedContexts is an array before using includes
+  if (!Array.isArray(focusState.allowedContexts)) {
+    console.error("[FocusEngine] allowedContexts is not an array:", focusState.allowedContexts);
+    return false; // Fail open rather than blocking everything
+  }
+  
+  // Add logging to help debug
+  console.log("[FocusEngine] allowed:", focusState.allowedContexts, "context:", context);
+  
+  // If context is in allowed list, it's not blocked
+  if (focusState.allowedContexts.includes(context)) {
+    return false;
+  }
+  
+  // Context is not in allowed list, so it's blocked
+  // Update the "recently blocked" state for badge
+  recentlyBlocked = true;
+  
+  // Show red "!" badge
+  chrome.action.setBadgeText({ text: "!" });
+  chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red
+  
+  // Clear the blocked indicator after 30 seconds
+  if (blockClearTimer) {
+    clearTimeout(blockClearTimer);
+  }
+  
+  blockClearTimer = setTimeout(() => {
+    if (recentlyBlocked) {
+      recentlyBlocked = false;
+      // Restore the normal focus badge
+      chrome.action.setBadgeText({ text: "•" });
+      chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
+    }
+  }, 30000);
+  
+  return true;
+}
+
+/**
+ * Check if a focus session is currently active
+ * 
+ * @returns true if a focus session is active, false otherwise
+ */
+export async function isActive(): Promise<boolean> {
+  const focusState = await getFocusState();
+  return focusState.active;
+}
+
+/**
+ * Get the time left in the current focus session in seconds
+ * 
+ * @returns Seconds left in the focus session, or -1 if no timer (unlimited session)
+ */
+export async function getTimeLeft(): Promise<number> {
+  const { active, endTime } = await getFocusState();
+  if (!active) return 0; // Not active, no time
+  if (!endTime) return -1; // -1 = unlimited/indefinite session
+  return Math.max(0, endTime - Date.now()) / 1000; // seconds
+}
+
+/**
+ * Restore a saved workspace by name. 
+ * Re-open tabs and re-create groups (approximation).
+ */
+export async function restoreWorkspace(name: string): Promise<void> {
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  if (!savedWorkspaces) return;
+
+  const workspace = savedWorkspaces.find(ws => ws.name === name);
+  if (!workspace) return;
+
+  // For each group, re-create tabs
+  for (const grp of workspace.tabGroups) {
+    // Open each tab
+    const tabIds = [];
+    for (const url of grp.tabUrls) {
+      const createdTab = await chrome.tabs.create({ url, active: false });
+      tabIds.push(createdTab.id as number);
+    }
+    // Create or update tab group
+    if (tabIds.length > 0) {
+      const newGroupId = await chrome.tabs.group({ tabIds });
+      await chrome.tabGroups.update(newGroupId, {
+        title: grp.title || "",
+        color: grp.color
+      });
+    }
+  }
+}
+
+/**
+ * Save current window's tab groups (workspace).
+ * This can be called at the end of a Focus Session or on demand.
+ */
+export async function saveCurrentWorkspace(name: string): Promise<void> {
+  // Get all tab groups
+  const groups = await chrome.tabGroups.query({});
+  // For each group, gather tab URLs
+  const workspaceGroups = await Promise.all(
+    groups.map(async (grp) => {
+      const tabs = await chrome.tabs.query({ groupId: grp.id });
+      return {
+        groupId: grp.id,
+        title: grp.title || "",
+        color: grp.color,
+        tabUrls: tabs.map(t => t.url || "")
+      };
+    })
+  );
+
+  // Store in savedWorkspaces
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  const newWorkspaceEntry = {
+    name,
+    tabGroups: workspaceGroups,
+    timestamp: Date.now()
+  };
+
+  const updatedWorkspaces = Array.isArray(savedWorkspaces) 
+    ? [...savedWorkspaces, newWorkspaceEntry]
+    : [newWorkspaceEntry];
+
+  await setStorage({ savedWorkspaces: updatedWorkspaces });
+}
+
+/**
+ * Clean up old workspace entries if needed, or remove a workspace by name, etc.
+ */
+export async function removeWorkspace(name: string): Promise<void> {
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  if (!savedWorkspaces) return;
+
+  const updatedWorkspaces = savedWorkspaces.filter(ws => ws.name !== name);
+  await setStorage({ savedWorkspaces: updatedWorkspaces });
+} 
+
+# ./src/lib/pickColor.ts
+################################################################################
+export function pickColorForContext(context: string): chrome.tabGroups.ColorEnum {
+  switch (context) {
+    case "Work":
+      return "yellow";
+    case "Learning":
+      return "blue";
+    case "Entertainment":
+      return "green";
+    case "News":
+      return "red";
+    case "Shopping":
+      return "purple";
+    case "Social":
+      return "cyan";
+    case "Research":
+      return "pink";
+    case "Development":
+      return "orange";
+    default:
+      return "grey";  // Chrome uses "grey" (British spelling) not "gray"
+  }
+}
+
+# ./src/lib/contextEngine/contextHistory.ts
+################################################################################
+import { addContextToHistory, getStorage } from "../../api/storageApi";
+import { ContextSwitch } from "../../types/index";
+
+/**
+ * Class to track context history and detect focus issues
+ */
+export class ContextTracker {
+  private latestContext: string = "Unknown";
+  private latestUrl: string = "";
+  
+  /**
+   * Add context to history
+   */
+  async addContext(context: string, url: string, confidence: number): Promise<void> {
+    this.latestContext = context;
+    this.latestUrl = url;
+    
+    // Store in persistent storage
+    await addContextToHistory(context, url, confidence);
+  }
+  
+  /**
+   * Get context switches in a time window
+   */
+  async getContextSwitches(timeWindowMinutes: number = 15): Promise<ContextSwitch[]> {
+    const { contextHistory } = await getStorage(["contextHistory"]);
+    if (!contextHistory || contextHistory.length < 2) {
+      return [];
+    }
+    
+    const switches: ContextSwitch[] = [];
+    const now = Date.now();
+    const timeWindow = timeWindowMinutes * 60 * 1000;
+    
+    // Filter history to time window
+    const relevantHistory = contextHistory.filter(
+      entry => (now - entry.timestamp) < timeWindow
+    );
+    
+    // Find context switches
+    for (let i = 1; i < relevantHistory.length; i++) {
+      if (relevantHistory[i].context !== relevantHistory[i-1].context) {
+        switches.push({
+          from: relevantHistory[i-1].context,
+          to: relevantHistory[i].context,
+          timestamp: relevantHistory[i].timestamp,
+          fromUrl: relevantHistory[i-1].url,
+          toUrl: relevantHistory[i].url
+        });
+      }
+    }
+    
+    return switches;
+  }
+  
+  /**
+   * Get current context streak (consecutive entries with same context)
+   */
+  async getCurrentContextStreak(): Promise<number> {
+    const { contextHistory } = await getStorage(["contextHistory"]);
+    if (!contextHistory || contextHistory.length === 0) {
+      return 0;
+    }
+    
+    const currentContext = contextHistory[contextHistory.length - 1].context;
+    let streak = 1;
+    
+    // Count backwards from most recent
+    for (let i = contextHistory.length - 2; i >= 0; i--) {
+      if (contextHistory[i].context === currentContext) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    
+    return streak;
+  }
+  
+  /**
+   * Check if focus is lost based on context switches
+   */
+  async isLostFocus(switchThreshold: number = 5, timeWindowMinutes: number = 15): Promise<boolean> {
+    const switches = await this.getContextSwitches(timeWindowMinutes);
+    
+    // Check number of switches
+    if (switches.length >= switchThreshold) {
+      // Check if switching between different contexts
+      const contexts = new Set(switches.map(s => s.to));
+      if (contexts.size >= 3) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Get latest context
+   */
+  getLatestContext(): string {
+    return this.latestContext;
+  }
+  
+  /**
+   * Get latest URL
+   */
+  getLatestUrl(): string {
+    return this.latestUrl;
+  }
+}
+
+# ./src/lib/contextEngine/embeddingClassifier.ts
+################################################################################
+// This is a simplified version that can work without TensorFlow.js
+// In production, you'd use the Universal Sentence Encoder model
+
+/**
+ * Simple context classifier that doesn't rely on TensorFlow
+ * This is a fallback for when TensorFlow.js can't be used
+ */
+export class TextClassifier {
+  private initialized: boolean = false;
+  private categoryKeywords: Record<string, string[]> = {
+    "Work": [
+      "project deadline meeting task client report presentation office business email colleague manager workflow productivity professional",
+    ],
+    "Learning": [
+      "course lesson tutorial learn study education assignment homework university college school academy lecture professor student quiz exam test knowledge textbook",
+    ],
+    "Entertainment": [
+      "movie show stream watch video game play fun music song entertainment netflix youtube hulu disney hbo amazon twitch gaming",
+    ],
+    "News": [
+      "news article report breaking headline journalist media press update current politics election government president minister cnn bbc nyt reuters associated",
+    ],
+    "Shopping": [
+      "shop buy purchase order cart checkout price discount product item amazon ebay etsy store mall shipping delivery payment credit review",
+    ],
+    "Social": [
+      "friend message chat post share social network facebook twitter instagram snapchat tiktok linkedin reddit forum comment like follow connect profile",
+    ],
+    "Research": [
+      "research study analysis data information journal article paper science scientific academic scholar experiment theory hypothesis methodology finding conclude reference citation",
+    ],
+    "Development": [
+      "code programming developer software github git repository commit function class method variable object array string stack overflow javascript python typescript",
+    ]
+  };
+  
+  /**
+   * Initialize the classifier
+   */
+  async initialize(): Promise<void> {
+    this.initialized = true;
+  }
+  
+  /**
+   * Classify text into context categories
+   */
+  async classify(text: string): Promise<Record<string, number>> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    const textLower = text.toLowerCase();
+    const scores: Record<string, number> = {};
+    
+    // Simple scoring based on keyword presence
+    for (const [category, keywordLists] of Object.entries(this.categoryKeywords)) {
+      let categoryScore = 0;
+      
+      for (const keywordList of keywordLists) {
+        const keywords = keywordList.split(" ");
+        let keywordsFound = 0;
+        
+        for (const keyword of keywords) {
+          if (textLower.includes(keyword)) {
+            keywordsFound++;
+            categoryScore += 1;
+          }
+        }
+        
+        // Normalize score
+        if (keywordsFound > 0) {
+          categoryScore = categoryScore / (keywords.length * 0.3);
+        }
+      }
+      
+      scores[category] = Math.min(1, categoryScore);
+    }
+    
+    return scores;
+  }
+}
+
+# ./src/lib/contextEngine/index.ts
+################################################################################
+import { PageData, ContextResult } from "../../types/index";
+import { analyzeText } from "./textAnalyzer";
+import { analyzeUrl, getDomainCategory, extractDomain } from "./urlAnalyzer";
+import { TextClassifier } from "./embeddingClassifier";
+import { ContextTracker } from "./contextHistory";
+
+// Singleton instances
+const textClassifier = new TextClassifier();
+const contextTracker = new ContextTracker();
+
+// Initialize the engine
+let initialized = false;
+
+/**
+ * Initialize the context engine
+ */
+export async function initializeContextEngine(): Promise<void> {
+  if (initialized) return;
+  
+  try {
+    // Initialize text classifier
+    await textClassifier.initialize();
+    console.log("[Context] Context engine initialized successfully");
+    initialized = true;
+  } catch (error) {
+    console.error("[Context] Failed to initialize context engine:", error);
+    // Continue anyway, will use fallback methods
+  }
+}
+
+/**
+ * Extract metadata from the document
+ */
+export function extractMetadata(): { description: string, keywords: string[] } {
+  let description = "";
+  let keywords: string[] = [];
+  
+  // Get meta description
+  const descEl = document.querySelector('meta[name="description"]');
+  if (descEl) {
+    description = descEl.getAttribute('content') || "";
+  }
+  
+  // Get meta keywords
+  const keywordsEl = document.querySelector('meta[name="keywords"]');
+  if (keywordsEl) {
+    const keywordText = keywordsEl.getAttribute('content') || "";
+    keywords = keywordText.split(',').map(k => k.trim());
+  }
+  
+  return { description, keywords };
+}
+
+/**
+ * Extract page data for context analysis
+ */
+export function extractPageData(): PageData {
+  const metadata = extractMetadata();
+  const domain = extractDomain(window.location.href);
+  
+  return {
+    url: window.location.href,
+    title: document.title,
+    fullText: document.body.innerText || "",
+    metaDescription: metadata.description,
+    metaKeywords: metadata.keywords,
+    domainCategory: getDomainCategory(domain)
+  };
+}
+
+/**
+ * Combine scores with weights
+ */
+function combineScores(
+  textScores: Record<string, number>,
+  urlScores: Record<string, number>,
+  domainCategory?: string
+): Record<string, number> {
+  const combinedScores: Record<string, number> = { ...textScores };
+  
+  // Add URL scores with lower weight
+  for (const [context, score] of Object.entries(urlScores)) {
+    combinedScores[context] = (combinedScores[context] || 0) + (score * 0.3);
+  }
+  
+  // Boost domain category if available
+  if (domainCategory && combinedScores[domainCategory]) {
+    combinedScores[domainCategory] = combinedScores[domainCategory] * 1.3;
+  }
+  
+  return combinedScores;
+}
+
+/**
+ * Convert scores to final result
+ */
+function formatResult(scores: Record<string, number>): ContextResult {
+  // Sort contexts by score
+  const sortedContexts = Object.entries(scores)
+    .filter(([_, score]) => score > 0)
+    .sort((a, b) => b[1] - a[1]);
+  
+  if (sortedContexts.length === 0) {
+    return {
+      primaryContext: "General",
+      confidence: 1,
+      secondaryContexts: []
+    };
+  }
+  
+  // Get primary and secondary contexts
+  const [primaryContext, primaryScore] = sortedContexts[0];
+  const secondaryContexts = sortedContexts.slice(1, 4).map(([context, score]) => ({
+    context,
+    confidence: score
+  }));
+  
+  return {
+    primaryContext,
+    confidence: primaryScore,
+    secondaryContexts,
+    features: scores
+  };
+}
+
+/**
+ * Classify page context
+ */
+export async function classifyPageContext(pageData: PageData): Promise<ContextResult> {
+  // Ensure engine is initialized
+  if (!initialized) {
+    await initializeContextEngine();
+  }
+  
+  // Get scores from different sources
+  const textScores = await textClassifier.classify(pageData.fullText);
+  const urlScores = analyzeUrl(pageData.url);
+  
+  // Combine scores
+  const combinedScores = combineScores(textScores, urlScores, pageData.domainCategory);
+  
+  // Format result
+  const result = formatResult(combinedScores);
+  
+  // Enable context tracking
+  await contextTracker.addContext(
+    result.primaryContext, 
+    pageData.url, 
+    result.confidence
+  );
+  
+  return result;
+}
+
+/**
+ * Get context tracker instance
+ */
+export function getContextTracker(): ContextTracker {
+  return contextTracker;
+}
+
+# ./src/lib/contextEngine/textAnalyzer.ts
+################################################################################
+import { StorageData } from "../../api/storageApi";
+
+// Default keyword dictionaries with weights
+const DEFAULT_CONTEXT_KEYWORDS: Record<string, Record<string, number>> = {
+  "Work": {
+    "project": 0.8, "deadline": 0.9, "meeting": 0.7, "task": 0.8, "client": 0.8, 
+    "report": 0.7, "presentation": 0.7, "office": 0.6, "business": 0.8, "email": 0.6,
+    "colleague": 0.7, "manager": 0.7, "workflow": 0.8, "productivity": 0.7, "professional": 0.7
+  },
+  "Learning": {
+  "course": 0.9, "lesson": 0.8, "tutorial": 0.9, "learn": 0.8, "study": 0.9,
+  "education": 0.7, "assignment": 0.9, "homework": 0.9, "university": 0.8, "college": 0.8,
+  "school": 0.7, "academy": 0.7, "lecture": 0.9, "professor": 0.8, "student": 0.7,
+  "quiz": 0.8, "exam": 0.9, "test": 0.7, "knowledge": 0.6, "textbook": 0.8,
+  "admissions": 0.9, "academics": 0.8, "majors": 0.8, "undergraduate": 0.9,
+  "graduate": 0.9, "faculty": 0.7, "syllabus": 0.8, "transcript": 0.7,
+  "campus": 0.6, "enroll": 0.9
+  },
+  "Entertainment": {
+    "movie": 0.9, "show": 0.7, "stream": 0.7, "watch": 0.6, "video": 0.7,
+    "game": 0.8, "play": 0.6, "fun": 0.7, "music": 0.8, "song": 0.8,
+    "entertainment": 0.9, "netflix": 0.9, "youtube": 0.8, "hulu": 0.9, "disney": 0.8,
+    "hbo": 0.9, "amazon": 0.5, "twitch": 0.9, "gaming": 0.9
+  },
+  "News": {
+    "news": 0.9, "article": 0.7, "report": 0.6, "breaking": 0.8, "headline": 0.9,
+    "journalist": 0.8, "media": 0.7, "press": 0.7, "update": 0.6, "current": 0.6,
+    "politics": 0.7, "election": 0.7, "government": 0.6, "president": 0.6, "minister": 0.6,
+    "cnn": 0.9, "bbc": 0.9, "nyt": 0.9, "reuters": 0.9, "associated": 0.7
+  },
+  "Shopping": {
+    "shop": 0.9, "buy": 0.8, "purchase": 0.8, "order": 0.7, "cart": 0.9,
+    "checkout": 0.9, "price": 0.8, "discount": 0.8, "product": 0.8, "item": 0.7,
+    "amazon": 0.8, "ebay": 0.9, "etsy": 0.9, "store": 0.8, "mall": 0.8,
+    "shipping": 0.8, "delivery": 0.7, "payment": 0.8, "credit": 0.7, "review": 0.6
+  },
+  "Social": {
+    "friend": 0.8, "message": 0.7, "chat": 0.8, "post": 0.7, "share": 0.7,
+    "social": 0.9, "network": 0.7, "facebook": 0.9, "twitter": 0.9, "instagram": 0.9,
+    "snapchat": 0.9, "tiktok": 0.9, "linkedin": 0.9, "reddit": 0.8, "forum": 0.7,
+    "comment": 0.7, "like": 0.6, "follow": 0.6, "connect": 0.7, "profile": 0.8
+  },
+  "Research": {
+    "research": 0.9, "study": 0.8, "analysis": 0.8, "data": 0.7, "information": 0.6,
+    "journal": 0.9, "article": 0.8, "paper": 0.7, "science": 0.8, "scientific": 0.8,
+    "academic": 0.9, "scholar": 0.9, "experiment": 0.8, "theory": 0.7, "hypothesis": 0.8,
+    "methodology": 0.8, "finding": 0.7, "conclude": 0.7, "reference": 0.7, "citation": 0.8
+  },
+  "Development": {
+    "code": 0.9, "programming": 0.9, "developer": 0.9, "software": 0.8, "github": 0.9,
+    "git": 0.8, "repository": 0.8, "commit": 0.8, "function": 0.7, "class": 0.7,
+    "method": 0.7, "variable": 0.7, "object": 0.7, "array": 0.7, "string": 0.7,
+    "stack": 0.8, "overflow": 0.8, "javascript": 0.8, "python": 0.8, "typescript": 0.8
+  }
+};
+
+// Cache for context keywords to avoid storage hits
+let keywordsCache: Record<string, Record<string, number>> | null = null;
+
+// Setup storage change listener to invalidate cache
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.contextKeywords) {
+    // Clear the cache when keywords are updated
+    keywordsCache = null;
+  }
+});
+
+/**
+ * Get context keywords with caching
+ */
+export async function getContextKeywords(): Promise<Record<string, Record<string, number>>> {
+  // Return from cache if available
+  if (keywordsCache !== null) {
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
+  }
+  
+  try {
+    const { contextKeywords } = await chrome.storage.local.get("contextKeywords") as Pick<StorageData, "contextKeywords">;
+    // Store in cache
+    keywordsCache = contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
+  } catch (error) {
+    console.error("Error loading context keywords:", error);
+    keywordsCache = DEFAULT_CONTEXT_KEYWORDS;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
+  }
+}
+
+/**
+ * Preprocess text by removing boilerplate and normalizing
+ */
+function preprocessText(text: string): string {
+  // Remove common boilerplate elements
+  const boilerplatePatterns = [
+    /<header[^>]*>[\s\S]*?<\/header>/gi,
+    /<footer[^>]*>[\s\S]*?<\/footer>/gi,
+    /<nav[^>]*>[\s\S]*?<\/nav>/gi,
+    /<script[^>]*>[\s\S]*?<\/script>/gi,
+    /<style[^>]*>[\s\S]*?<\/style>/gi,
+    /<!--[\s\S]*?-->/g,
+    /cookie|privacy|terms|menu|navigation|footer|header|sidebar/gi
+  ];
+  
+  let processedText = text;
+  for (const pattern of boilerplatePatterns) {
+    processedText = processedText.replace(pattern, ' ');
+  }
+  
+  // Normalize whitespace
+  processedText = processedText.replace(/\s+/g, ' ').trim();
+  
+  // Cap text length to focus on most relevant content
+  const MAX_TEXT_LENGTH = 5000;
+  if (processedText.length > MAX_TEXT_LENGTH) {
+    processedText = processedText.substring(0, MAX_TEXT_LENGTH);
+  }
+  
+  return processedText;
+}
+
+/**
+ * Calculate TF-IDF scores with normalization
+ */
+function calculateTFIDF(text: string, keywords: Record<string, Record<string, number>>): Record<string, number> {
+  const textLower = text.toLowerCase();
+  const scores: Record<string, number> = {};
+  
+  // Calculate term frequencies
+  const termFreq: Record<string, number> = {};
+  const words = textLower.split(/\W+/);
+  const totalWords = words.length;
+  
+  for (const word of words) {
+    termFreq[word] = (termFreq[word] || 0) + 1;
+  }
+  
+  // Calculate TF-IDF scores for each category
+  for (const [category, keywordWeights] of Object.entries(keywords)) {
+    let categoryScore = 0;
+    let matchedTerms = 0;
+    
+    for (const [keyword, weight] of Object.entries(keywordWeights)) {
+      if (termFreq[keyword]) {
+        // TF: term frequency normalized by total words
+        const tf = termFreq[keyword] / totalWords;
+        
+        // IDF: a constant value for weight normalization
+        const idf = 1.5;
+        
+        categoryScore += tf * idf * weight;
+        matchedTerms++;
+      }
+    }
+    
+    // Normalize score based on number of matched terms
+    if (matchedTerms > 0) {
+      scores[category] = Math.min(1, categoryScore / (matchedTerms * 0.3));
+    } else {
+      scores[category] = 0;
+    }
+  }
+  
+  return scores;
+}
+
+/**
+ * Analyze text with improved TF-IDF scoring
+ */
+export async function analyzeText(text: string): Promise<Record<string, number>> {
+  const processedText = preprocessText(text);
+  const keywords = await getContextKeywords();
+  return calculateTFIDF(processedText, keywords);
+}
+
+# ./src/lib/contextEngine/urlAnalyzer.ts
+################################################################################
+// Known domain categories
+export const DOMAIN_CATEGORIES: Record<string, string> = {
+  // Work/Productivity
+  "docs.google.com": "Work",
+  "sheets.google.com": "Work",
+  "slides.google.com": "Work",
+  "drive.google.com": "Work",
+  "office.com": "Work",
+  "microsoft365.com": "Work",
+  "linkedin.com": "Work",
+  "slack.com": "Work",
+  "teams.microsoft.com": "Work",
+  "asana.com": "Work",
+  "trello.com": "Work",
+  "notion.so": "Work",
+  "monday.com": "Work",
+  "atlassian.com": "Work",
+  "jira.com": "Work",
+  "basecamp.com": "Work",
+  "zoom.us": "Work",
+  
+  // Learning
+  "coursera.org": "Learning",
+  "udemy.com": "Learning",
+  "edx.org": "Learning",
+  "khanacademy.org": "Learning",
+  "duolingo.com": "Learning",
+  "canvas.instructure.com": "Learning",
+  "blackboard.com": "Learning",
+  "quizlet.com": "Learning",
+  "chegg.com": "Learning",
+  "brilliant.org": "Learning",
+  "codecademy.com": "Learning",
+  "freecodecamp.org": "Learning",
+  "lynda.com": "Learning",
+  "skillshare.com": "Learning",
+  "pluralsight.com": "Learning",
+  
+  // Entertainment
+  "netflix.com": "Entertainment",
+  "hulu.com": "Entertainment",
+  "disneyplus.com": "Entertainment",
+  "hbomax.com": "Entertainment",
+  "youtube.com": "Entertainment",
+  "twitch.tv": "Entertainment",
+  "spotify.com": "Entertainment",
+  "pandora.com": "Entertainment",
+  "tidal.com": "Entertainment",
+  "soundcloud.com": "Entertainment",
+  "steam.com": "Entertainment",
+  "epicgames.com": "Entertainment",
+  "ign.com": "Entertainment",
+  "imdb.com": "Entertainment",
+  "rottentomatoes.com": "Entertainment",
+  
+  // News
+  "cnn.com": "News",
+  "bbc.com": "News",
+  "nytimes.com": "News",
+  "washingtonpost.com": "News",
+  "reuters.com": "News",
+  "apnews.com": "News",
+  "foxnews.com": "News",
+  "nbcnews.com": "News",
+  "abcnews.go.com": "News",
+  "cbsnews.com": "News",
+  "politico.com": "News",
+  "economist.com": "News",
+  "wsj.com": "News",
+  "bloomberg.com": "News",
+  "theguardian.com": "News",
+  
+  // Development
+  "github.com": "Development",
+  "gitlab.com": "Development",
+  "bitbucket.org": "Development",
+  "stackoverflow.com": "Development",
+  "developer.mozilla.org": "Development",
+  "w3schools.com": "Development",
+  "codepen.io": "Development",
+  "replit.com": "Development",
+  "codesandbox.io": "Development",
+  "jsfiddle.net": "Development",
+  "npmjs.com": "Development",
+  "pypi.org": "Development",
+  "docker.com": "Development",
+  "kubernetes.io": "Development",
+  "digitalocean.com": "Development",
+  
+  // Shopping
+  "amazon.com": "Shopping",
+  "ebay.com": "Shopping",
+  "walmart.com": "Shopping",
+  "target.com": "Shopping",
+  "bestbuy.com": "Shopping",
+  "etsy.com": "Shopping",
+  "aliexpress.com": "Shopping",
+  "wayfair.com": "Shopping",
+  "costco.com": "Shopping",
+  "newegg.com": "Shopping",
+  "homedepot.com": "Shopping",
+  "lowes.com": "Shopping",
+  "macys.com": "Shopping",
+  "nordstrom.com": "Shopping",
+  "zappos.com": "Shopping",
+  
+  // Social
+  "facebook.com": "Social",
+  "twitter.com": "Social",
+  "instagram.com": "Social",
+  "reddit.com": "Social",
+  "pinterest.com": "Social",
+  "tumblr.com": "Social",
+  "tiktok.com": "Social",
+  "snapchat.com": "Social",
+  "discord.com": "Social",
+  "messenger.com": "Social",
+  "telegram.org": "Social",
+  "whatsapp.com": "Social",
+  "signal.org": "Social",
+  "medium.com": "Social",
+  "quora.com": "Social",
+  
+  // Research
+  "scholar.google.com": "Research",
+  "pubmed.ncbi.nlm.nih.gov": "Research",
+  "researchgate.net": "Research",
+  "academia.edu": "Research",
+  "jstor.org": "Research",
+  "springer.com": "Research",
+  "sciencedirect.com": "Research",
+  "ieee.org": "Research",
+  "ncbi.nlm.nih.gov": "Research",
+  "arxiv.org": "Research",
+  "sciencemag.org": "Research",
+  "nature.com": "Research",
+  "webofknowledge.com": "Research",
+  "scopus.com": "Research",
+  "mendeley.com": "Research"
+};
+
+/**
+ * Extract domain from URL
+ */
+export function extractDomain(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (error) {
+    console.error("Error extracting domain:", error);
+    return "";
+  }
+}
+
+/**
+ * Get domain category from predefined list
+ */
+export function getDomainCategory(domain: string): string | undefined {
+  // Try exact match
+  if (DOMAIN_CATEGORIES[domain]) {
+    return DOMAIN_CATEGORIES[domain];
+  }
+  
+  // Try with 'www.' prefix removed
+  if (domain.startsWith('www.')) {
+    const withoutWww = domain.substring(4);
+    if (DOMAIN_CATEGORIES[withoutWww]) {
+      return DOMAIN_CATEGORIES[withoutWww];
+    }
+  }
+  
+  // Try parent domain
+  const parts = domain.split('.');
+  if (parts.length > 2) {
+    const parentDomain = parts.slice(parts.length - 2).join('.');
+    return DOMAIN_CATEGORIES[parentDomain];
+  }
+  
+  return undefined;
+}
+
+/**
+ * Extract path keywords from URL
+ */
+export function extractPathKeywords(url: string): string[] {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.pathname
+      .split('/')
+      .filter(Boolean)
+      .flatMap(segment => 
+        segment
+          .split(/[-_]/)
+          .filter(word => word.length > 2)
+      );
+  } catch (error) {
+    console.error("Error extracting path keywords:", error);
+    return [];
+  }
+}
+
+/**
+ * Analyze URL for context clues
+ */
+export function analyzeUrl(url: string): Record<string, number> {
+  const domain = extractDomain(url);
+  const domainCategory = getDomainCategory(domain);
+  const pathKeywords = extractPathKeywords(url);
+  
+  const scores: Record<string, number> = {};
+  
+  // Set base score from domain
+  if (domainCategory) {
+    scores[domainCategory] = 0.8;
+  }
+  
+  // Add scores from path keywords (could be enhanced with TF-IDF against keywords)
+  // This is a simplified implementation
+  
+  return scores;
+}
+
+# ./src/lib/panels/sidePanelManager.ts
+################################################################################
+/**
+ * Open the side panel in the current window
+ */
+export async function openSidePanel(): Promise<void> {
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    await chrome.sidePanel.open({ windowId: currentWindow.id });
+    console.log("Side panel opened successfully");
+  } catch (error) {
+    console.error("Error opening side panel:", error);
+  }
+}
+
+/**
+ * Close the side panel in all windows
+ */
+export async function closeSidePanel(): Promise<void> {
+  try {
+    const panels = await chrome.sidePanel.getAll();
+    await Promise.all(panels.map((panel: chrome.sidePanel.PanelInfo) => 
+      chrome.sidePanel.close({ windowId: panel.windowId })
+    ));
+    console.log("Side panels closed successfully");
+  } catch (error) {
+    console.error("Error closing side panels:", error);
+  }
+}
+
+/**
+ * Set the side panel properties
+ */
+export async function setSidePanelProperties(path: string, title: string): Promise<void> {
+  try {
+    await chrome.sidePanel.setOptions({
+      path,
+      enabled: true
+    });
+    console.log("Side panel properties updated");
+  } catch (error) {
+    console.error("Error setting side panel properties:", error);
+  }
+} 
+
+# ./src/lib/ui/tooltips.ts
+################################################################################
+/**
+ * Super‑light tooltip helper – any element with `[data-tip]` gets a hover hint.
+ */
+
+const tip = document.createElement("div");
+tip.style.cssText = `
+  position:fixed;pointer-events:none;z-index:2147483646;
+  background:#333;color:#fff;padding:6px 10px;border-radius:4px;
+  font-size:12px;font-family:Arial;opacity:0;transition:opacity .15s`;
+document.addEventListener("DOMContentLoaded", () => document.body.appendChild(tip));
+
+let active = false;
+
+function show(e: MouseEvent) {
+  const el = e.target as HTMLElement;
+  const msg = el?.getAttribute("data-tip");
+  if (!msg) return;
+  tip.textContent = msg;
+  const rect = el.getBoundingClientRect();
+  tip.style.top = `${rect.bottom + 8 + window.scrollY}px`;
+  tip.style.left = `${rect.left + rect.width / 2 - tip.offsetWidth / 2 + window.scrollX}px`;
+  tip.style.opacity = "1";
+  active = true;
+}
+
+function hide() {
+  if (!active) return;
+  tip.style.opacity = "0";
+  active = false;
+}
+
+document.addEventListener("mouseover", show);
+document.addEventListener("mouseout", hide); 
+
+# ./src/lib/windows/focusWindow.ts
+################################################################################
+let focusWindowId: number | undefined;
+
+/**
+ * Create a dedicated window for the focus session
+ * This creates a new window that can be populated with productive tabs
+ */
+export async function launchFocusWindow(): Promise<number | undefined> {
+  try {
+    // Check if focus window already exists
+    if (focusWindowId !== undefined) {
+      try {
+        // Try to get window to verify it still exists
+        await chrome.windows.get(focusWindowId);
+        return focusWindowId; // Window already exists
+      } catch (error) {
+        // Window doesn't exist anymore, reset the ID
+        focusWindowId = undefined;
+      }
+    }
+
+    // Create a new window
+    const { id } = await chrome.windows.create({
+      url: "about:blank",
+      type: "normal",
+      state: "maximized"
+    });
+    
+    focusWindowId = id;
+    
+    // Create a welcoming tab
+    if (id) {
+      const tabs = await chrome.tabs.query({ windowId: id });
+      
+      // If there's at least one tab (the default about:blank), update it
+      if (tabs.length > 0 && tabs[0].id) {
+        await chrome.tabs.update(tabs[0].id, { 
+          url: chrome.runtime.getURL("blocked.html") + "?mode=welcome" 
+        });
+      }
+    }
+    
+    return focusWindowId;
+  } catch (error) {
+    console.error("Error launching focus window:", error);
+    return undefined;
+  }
+}
+
+/**
+ * Close the dedicated focus window
+ */
+export async function closeFocusWindow(): Promise<void> {
+  if (focusWindowId === undefined) return;
+  
+  try {
+    await chrome.windows.remove(focusWindowId);
+    focusWindowId = undefined;
+  } catch (error) {
+    console.error("Error closing focus window:", error);
+    // Reset the ID even if there was an error
+    focusWindowId = undefined;
+  }
+}
+
+/**
+ * Check if the focus window is active
+ */
+export function getFocusWindowId(): number | undefined {
+  return focusWindowId;
+}
+
+/**
+ * Move a tab to the focus window
+ */
+export async function moveTabToFocusWindow(tabId: number): Promise<boolean> {
+  if (focusWindowId === undefined) {
+    const windowId = await launchFocusWindow();
+    if (windowId === undefined) return false;
+  }
+  
+  try {
+    await chrome.tabs.move(tabId, { windowId: focusWindowId!, index: -1 });
+    return true;
+  } catch (error) {
+    console.error("Error moving tab to focus window:", error);
+    return false;
+  }
+} 
+
+# ./src/options/options.css
+################################################################################
+/* Add these styles at an appropriate location in the CSS file */
+
+/* Parked Links Section */
+#parkedLinksSection {
+  margin-top: 30px;
+}
+
+.parked-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  background-color: #f5f5f5;
+  position: relative;
+}
+
+.parked-item:hover {
+  background-color: #e9e9e9;
+}
+
+.link-title {
+  flex: 2;
+  font-weight: 500;
+  text-decoration: none;
+  color: #0066cc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 10px;
+}
+
+.link-title:hover {
+  text-decoration: underline;
+}
+
+.link-context {
+  flex: 1;
+  color: #666;
+  font-size: 0.9em;
+  text-align: center;
+  max-width: 100px;
+}
+
+.link-date {
+  flex: 1;
+  color: #666;
+  font-size: 0.9em;
+  text-align: right;
+}
+
+.action-buttons {
+  margin-top: 15px;
+  display: flex;
+  gap: 10px;
+}
+
+.action-btn {
+  padding: 8px 15px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.action-btn.primary {
+  background-color: #0066cc;
+  color: white;
+}
+
+.action-btn.primary:hover {
+  background-color: #0055aa;
+}
+
+.action-btn.secondary {
+  background-color: #e0e0e0;
+  color: #333;
+}
+
+.action-btn.secondary:hover {
+  background-color: #d0d0d0;
+}
+
+.empty-state {
+  color: #666;
+  font-style: italic;
+  padding: 15px;
+  text-align: center;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  margin: 10px 0;
+} 
+
+# ./src/options/options.html
+################################################################################
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Context Focus - Options</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      h1 {
+        color: #333;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 10px;
+      }
+      h2 {
+        margin-top: 30px;
+        color: #444;
+      }
+      .option-group {
+        margin-bottom: 30px;
+        padding: 15px;
+        background-color: #f9f9f9;
+        border-radius: 5px;
+      }
+      label {
+        display: block;
+        margin-bottom: 15px;
+      }
+      input[type="checkbox"] {
+        margin-right: 10px;
+      }
+      input[type="number"] {
+        width: 60px;
+        padding: 5px;
+      }
+      button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      button:hover {
+        background-color: #45a049;
+      }
+      .context-categories {
+        margin-top: 20px;
+      }
+      .context-card {
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 10px;
+      }
+      .context-card h3 {
+        margin-top: 0;
+      }
+      .options-section {
+        margin-bottom: 30px;
+        padding: 15px;
+        background-color: #f9f9f9;
+        border-radius: 5px;
+      }
+      .section-info {
+        color: #666;
+        margin-bottom: 15px;
+      }
+      .list-container {
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 15px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      .empty-state {
+        color: #999;
+        font-style: italic;
+        text-align: center;
+        padding: 20px;
+        background-color: #fff;
+      }
+      .action-buttons {
+        display: flex;
+        gap: 10px;
+      }
+      .action-btn {
+        flex: 1;
+        padding: 8px 12px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .primary {
+        background-color: #2196F3;
+        color: white;
+      }
+      .secondary {
+        background-color: #f44336;
+        color: white;
+      }
+      .save-btn {
+        display: block;
+        margin: 30px auto;
+        padding: 12px 25px;
+        font-size: 18px;
+      }
+      .parked-link-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background-color: #f5f5f5;
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+      }
+      .link-title {
+        font-weight: bold;
+        margin-right: 10px;
+      }
+      .link-url {
+        color: #666;
+        font-size: 0.9em;
+        word-break: break-all;
+      }
+      .link-remove {
+        background: none;
+        border: none;
+        color: #f44336;
+        cursor: pointer;
+        font-size: 1.2em;
+        padding: 0 5px;
+      }
+      .override-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background-color: #f5f5f5;
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+      }
+      .override-domain {
+        font-weight: 600;
+        flex-basis: 40%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-right: 10px;
+      }
+      .override-context {
+        flex-basis: 30%;
+        color: #333;
+        text-align: center;
+      }
+      .override-remove-btn {
+        background: #f44336;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 24px;
+        height: 24px;
+        line-height: 24px;
+        text-align: center;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 14px;
+        padding: 0;
+      }
+      .override-remove-btn:hover {
+        background: #d32f2f;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Context Focus - Options</h1>
+    
+    <div class="option-group">
+      <h2>Extension Options</h2>
+      <label>
+        <input type="checkbox" id="extensionEnabledCheckbox" />
+        Enable Context Focus extension
+      </label>
+    </div>
+    
+    <div class="option-group">
+      <h2>Focus Settings</h2>
+      <label>
+        <input type="checkbox" id="notificationsCheckbox" />
+        Show notifications when losing focus
+      </label>
+      
+      <label>
+        <input type="checkbox" id="autoGroupCheckbox" />
+        Automatically group tabs by context
+      </label>
+      
+      <label>
+        Context switch threshold:
+        <input type="number" id="switchThresholdInput" min="2" max="20" />
+        <span>(Number of context switches that trigger a focus alert)</span>
+      </label>
+      
+      <label>
+        Time window (minutes):
+        <input type="number" id="timeWindowInput" min="5" max="60" />
+        <span>(Period to monitor for context switches)</span>
+      </label>
+    </div>
+    
+    <div class="option-group context-categories">
+      <h2>Context Categories</h2>
+      <p>These are the categories used to classify page context:</p>
+      
+      <div class="context-card">
+        <h3>Work</h3>
+        <p>Productivity apps, email, documents, meetings, project management</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Learning</h3>
+        <p>Educational content, courses, tutorials, learning platforms</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Entertainment</h3>
+        <p>Movies, videos, games, music, streaming services</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>News</h3>
+        <p>News sites, current events, breaking stories</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Shopping</h3>
+        <p>Online stores, e-commerce, product reviews</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Social</h3>
+        <p>Social media, messaging, forums, communities</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Research</h3>
+        <p>Academic resources, scientific papers, research databases</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Development</h3>
+        <p>Programming, coding, software development, technical docs</p>
+      </div>
+    </div>
+    
+    <!-- NEW: Context Overrides Management Section -->
+    <div class="option-group">
+        <h2>Context Overrides</h2>
+        <p class="section-info">Manage domains where you have manually corrected the context classification. Removing an override will revert the domain to automatic classification.</p>
+
+        <div id="contextOverridesList" class="list-container">
+            <!-- Overrides will be populated here by options.js -->
+            <div class="empty-state">No context overrides have been set.</div>
+        </div>
+    </div>
+    <!-- END NEW SECTION -->
+    
+    <!-- Sub-URL Overrides Section -->
+    <div class="option-group">
+      <h2>Sub-URL Overrides</h2>
+      <p>Reclassify specific subpaths to different contexts. This is helpful for sites with mixed content (like Reddit).</p>
+      
+      <div id="subUrlOverridesList" style="margin-bottom: 15px;"></div>
+      
+      <div style="display: flex; margin-bottom: 10px;">
+        <input type="text" id="overrideUrlInput" placeholder="reddit.com/r/AskHistorians" style="flex: 2; padding: 8px; margin-right: 10px;" />
+        <select id="overrideContextSelect" style="flex: 1; padding: 8px;">
+          <option value="Work">Work</option>
+          <option value="Learning">Learning</option>
+          <option value="Entertainment">Entertainment</option>
+          <option value="News">News</option>
+          <option value="Shopping">Shopping</option>
+          <option value="Social">Social</option>
+          <option value="Research">Research</option>
+          <option value="Development">Development</option>
+        </select>
+      </div>
+      
+      <button id="addOverrideBtn" style="background-color: #2196F3;">Add Override</button>
+    </div>
+    
+    <!-- Later List / Parked Links Section -->
+    <div class="option-group" id="parkedLinksSection">
+      <h2>Later List</h2>
+      <p class="section-info">Links you've saved to revisit after your focus session.</p>
+      
+      <div id="parkedLinksList" class="list-container">
+        <div class="empty-state">No links have been parked yet.</div>
+      </div>
+      
+      <div class="action-buttons">
+        <button id="releaseParkedBtn" class="action-btn primary">Open All Links</button>
+        <button id="clearParkedBtn" class="action-btn secondary">Clear List</button>
+      </div>
+    </div>
+    
+    <!-- Feedback History Section -->
+    <div class="option-group" id="feedbackSection">
+      <h2>Classification Feedback</h2>
+      <p class="section-info">Your corrections to context classifications help improve the system.</p>
+      
+      <!-- Feedback Statistics Summary -->
+      <div id="feedbackStats" class="stats-container" style="margin-bottom: 15px; padding: 15px; background-color: white; border: 1px solid #ddd; border-radius: 4px;">
+        <div class="empty-state">No feedback has been provided yet.</div>
+      </div>
+      
+      <!-- Feedback History List -->
+      <div id="feedbackHistory" class="list-container">
+        <div class="empty-state">No feedback history available.</div>
+      </div>
+      
+      <div class="action-buttons">
+        <button id="clearFeedbackBtn" class="action-btn secondary">Clear Feedback History</button>
+      </div>
+    </div>
+    
+    <div class="action-buttons" style="margin-top: 30px;">
+      <button id="saveBtn" class="save-btn">Save Settings</button>
+      <button id="resetBtn" style="background-color: #f44336;">Reset to Defaults</button>
+    </div>
+    
+    <script src="options.js"></script>
+  </body>
+</html>
+
+# ./src/options/options.ts
+################################################################################
+import { getStorage, setStorage } from "../api/storageApi";
+import { FocusSettings } from "../types/index";
+import { getParkedLinks, releaseParkedLinks, clearParkedLinks } from "../api/parkedLinksApi";
+import { getFeedbackHistory, clearFeedbackHistory, getFeedbackStatistics } from "../api/feedbackApi";
+
+// DOM Elements
+const extensionEnabledCheckbox = document.getElementById("extensionEnabledCheckbox") as HTMLInputElement;
+const notificationsCheckbox = document.getElementById("notificationsCheckbox") as HTMLInputElement;
+const autoGroupCheckbox = document.getElementById("autoGroupCheckbox") as HTMLInputElement;
+const switchThresholdInput = document.getElementById("switchThresholdInput") as HTMLInputElement;
+const timeWindowInput = document.getElementById("timeWindowInput") as HTMLInputElement;
+const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement;
+const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
+const subUrlOverridesList = document.getElementById("subUrlOverridesList") as HTMLDivElement;
+const overrideUrlInput = document.getElementById("overrideUrlInput") as HTMLInputElement;
+const overrideContextSelect = document.getElementById("overrideContextSelect") as HTMLSelectElement;
+const addOverrideBtn = document.getElementById("addOverrideBtn") as HTMLButtonElement;
+const contextOverridesList = document.getElementById("contextOverridesList") as HTMLDivElement;
+
+// Parked Links UI Elements
+const parkedLinksList = document.getElementById("parkedLinksList") as HTMLDivElement;
+const releaseParkedBtn = document.getElementById("releaseParkedBtn") as HTMLButtonElement;
+const clearParkedBtn = document.getElementById("clearParkedBtn") as HTMLButtonElement;
+
+// Feedback UI Elements
+const feedbackStats = document.getElementById("feedbackStats") as HTMLDivElement;
+const feedbackHistory = document.getElementById("feedbackHistory") as HTMLDivElement;
+const clearFeedbackBtn = document.getElementById("clearFeedbackBtn") as HTMLButtonElement;
+
+// Default focus settings
+const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
+  enabled: true,
+  notificationsEnabled: true,
+  switchThreshold: 3,
+  timeWindowMinutes: 30
+};
+
+// Initialize UI
+document.addEventListener("DOMContentLoaded", initializeOptions);
+
+async function initializeOptions() {
+  const storage = await getStorage([
+    "extensionEnabled", 
+    "autoGroupEnabled",
+    "focusSettings",
+    "subUrlOverrides",
+    "parkedLinks",
+    "domainContextMap" // Fetch the domain overrides map
+  ]);
+  
+  // Extension enabled/disabled
+  extensionEnabledCheckbox.checked = storage.extensionEnabled ?? true;
+  
+  // Auto-grouping enabled/disabled
+  autoGroupCheckbox.checked = storage.autoGroupEnabled ?? false;
+  
+  // Focus Settings
+  const focusSettings = storage.focusSettings || DEFAULT_FOCUS_SETTINGS;
+  notificationsCheckbox.checked = focusSettings.notificationsEnabled ?? true;
+  switchThresholdInput.value = focusSettings.switchThreshold?.toString() || "3";
+  timeWindowInput.value = focusSettings.timeWindowMinutes?.toString() || "30";
+  
+  // Add event listeners
+  saveBtn.addEventListener("click", saveOptions);
+  resetBtn.addEventListener("click", resetOptions);
+  
+  // Load URL overrides (renamed to subUrlOverrides for clarity)
+  displaySubUrlOverrides(storage.subUrlOverrides || {});
+  addOverrideBtn.addEventListener("click", addNewSubUrlOverride);
+  
+  // Load domain context overrides
+  displayContextOverrides(storage.domainContextMap || {});
+  
+  // Load parked links
+  await displayParkedLinks(storage.parkedLinks || []);
+  
+  // Setup parked links actions
+  if (releaseParkedBtn) {
+    releaseParkedBtn.addEventListener("click", handleReleaseParkedLinks);
+  }
+  
+  if (clearParkedBtn) {
+    clearParkedBtn.addEventListener("click", handleClearParkedLinks);
+  }
+  
+  // Load feedback history and statistics
+  await displayFeedbackStats();
+  await displayFeedbackHistory();
+  
+  // Setup feedback actions
+  if (clearFeedbackBtn) {
+    clearFeedbackBtn.addEventListener("click", handleClearFeedback);
+  }
+}
+
+function getDefaultFocusSettings(): FocusSettings {
+  return {
+    enabled: true,
+    notificationsEnabled: true,
+    switchThreshold: 3,
+    timeWindowMinutes: 30
+  };
+}
+
+async function saveOptions() {
+  const focusSettings: FocusSettings = {
+    enabled: true,
+    notificationsEnabled: notificationsCheckbox.checked,
+    switchThreshold: parseInt(switchThresholdInput.value) || 3,
+    timeWindowMinutes: parseInt(timeWindowInput.value) || 30
+  };
+  
+  // Collect Sub-URL Overrides from UI
+  const subUrlOverrides: Record<string, string> = {};
+  const subUrlOverrideItems = subUrlOverridesList.querySelectorAll(".override-item");
+  subUrlOverrideItems.forEach(item => {
+    const urlSpan = item.querySelector(".override-url") as HTMLSpanElement;
+    const contextSpan = item.querySelector(".override-context") as HTMLSpanElement;
+    if (urlSpan && contextSpan) {
+      subUrlOverrides[urlSpan.textContent || ""] = contextSpan.textContent || "";
+    }
+  });
+  
+  // Collect Domain Context Overrides from UI
+  const domainContextMap: Record<string, string> = {};
+  const contextOverrideItems = contextOverridesList.querySelectorAll(".override-item");
+  contextOverrideItems.forEach(item => {
+    const domain = (item as HTMLElement).dataset.domain;
+    const contextSpan = item.querySelector(".override-context") as HTMLSpanElement;
+    if (domain && contextSpan?.textContent) {
+      domainContextMap[domain] = contextSpan.textContent;
+    }
+  });
+  
+  // Update storage with new settings
+  await setStorage({
+    extensionEnabled: extensionEnabledCheckbox.checked,
+    autoGroupEnabled: autoGroupCheckbox.checked,
+    focusSettings,
+    subUrlOverrides,
+    domainContextMap // Save the updated domain overrides
+  });
+  
+  // Notify background to update rules based on saved overrides
+  await chrome.runtime.sendMessage({ type: "SETTINGS_UPDATED" });
+  
+  // Show success notification
+  showNotification("Options saved!");
+}
+
+function showNotification(message: string, duration = 2000) {
+  const notification = document.createElement("div");
+  notification.textContent = message;
+  notification.style.position = "fixed";
+  notification.style.bottom = "20px";
+  notification.style.right = "20px";
+  notification.style.backgroundColor = "#4CAF50";
+  notification.style.color = "white";
+  notification.style.padding = "10px 20px";
+  notification.style.borderRadius = "4px";
+  notification.style.zIndex = "1000";
+  
+  document.body.appendChild(notification);
+  
+  setTimeout(() => {
+    notification.remove();
+  }, duration);
+}
+
+async function resetOptions() {
+  if (!confirm("Are you sure you want to reset all settings to their defaults? This will remove all your context overrides.")) {
+    return;
+  }
+
+  // Reset UI to defaults
+  extensionEnabledCheckbox.checked = true;
+  autoGroupCheckbox.checked = false;
+  const defaultSettings = getDefaultFocusSettings();
+  notificationsCheckbox.checked = defaultSettings.notificationsEnabled;
+  switchThresholdInput.value = defaultSettings.switchThreshold.toString();
+  timeWindowInput.value = defaultSettings.timeWindowMinutes.toString();
+  
+  // Clear URL overrides
+  subUrlOverridesList.innerHTML = '';
+  displaySubUrlOverrides({});
+  
+  // Clear Context Overrides
+  contextOverridesList.innerHTML = '';
+  displayContextOverrides({});
+  
+  // Save defaults
+  await setStorage({
+    extensionEnabled: true,
+    autoGroupEnabled: false,
+    focusSettings: defaultSettings,
+    subUrlOverrides: {},
+    domainContextMap: {} // Reset domain overrides
+  });
+  
+  // Notify background to update rules based on reset overrides
+  await chrome.runtime.sendMessage({ type: "SETTINGS_UPDATED" });
+  
+  showNotification("Options reset to defaults");
+}
+
+// Sub-URL Overrides UI Functions (renamed for clarity)
+function displaySubUrlOverrides(overrides: Record<string, string>) {
+  subUrlOverridesList.innerHTML = '';
+  
+  if (Object.keys(overrides).length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'empty-state';
+    emptyMsg.textContent = 'No Sub-URL overrides configured yet.';
+    subUrlOverridesList.appendChild(emptyMsg);
+    return;
+  }
+  
+  Object.entries(overrides).forEach(([url, context]) => {
+    addOverrideItem(url, context);
+  });
+}
+
+function addNewSubUrlOverride() {
+  const url = overrideUrlInput.value.trim();
+  const context = overrideContextSelect.value;
+  
+  if (!url) {
+    showNotification("Please enter a Sub-URL path (e.g., reddit.com/r/something)", 3000);
+    return;
+  }
+  
+  addOverrideItem(url, context);
+  overrideUrlInput.value = '';
+}
+
+function addOverrideItem(url: string, context: string) {
+  const item = document.createElement('div');
+  item.className = 'override-item';
+  
+  const urlSpan = document.createElement('span');
+  urlSpan.className = 'override-url';
+  urlSpan.textContent = url;
+  
+  const contextSpan = document.createElement('span');
+  contextSpan.className = 'override-context';
+  contextSpan.textContent = context;
+  
+  const deleteButton = document.createElement('button');
+  deleteButton.innerHTML = '&times;';
+  deleteButton.className = 'link-remove';
+  deleteButton.addEventListener('click', () => {
+    item.remove();
+  });
+  
+  item.appendChild(urlSpan);
+  item.appendChild(contextSpan);
+  item.appendChild(deleteButton);
+  
+  subUrlOverridesList.appendChild(item);
+}
+
+// Context Overrides (Domain-Level) UI Functions
+function displayContextOverrides(domainMap: Record<string, string>) {
+  contextOverridesList.innerHTML = ''; // Clear previous content
+
+  const domains = Object.keys(domainMap);
+
+  if (domains.length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'empty-state';
+    emptyMsg.textContent = 'No context overrides have been set.';
+    contextOverridesList.appendChild(emptyMsg);
+    return;
+  }
+
+  // Sort domains alphabetically for consistent display
+  domains.sort().forEach(domain => {
+    const context = domainMap[domain];
+    const item = document.createElement('div');
+    item.className = 'override-item';
+    item.dataset.domain = domain; // Store domain for removal
+
+    const domainSpan = document.createElement('span');
+    domainSpan.className = 'override-domain';
+    domainSpan.textContent = domain;
+    domainSpan.title = domain; // Tooltip for long domains
+
+    const contextSpan = document.createElement('span');
+    contextSpan.className = 'override-context';
+    contextSpan.textContent = context;
+
+    const removeButton = document.createElement('button');
+    removeButton.className = 'override-remove-btn';
+    removeButton.innerHTML = '×';
+    removeButton.title = `Remove override for ${domain}`;
+    removeButton.addEventListener('click', () => {
+      item.remove(); // Remove from UI immediately
+      // Save will happen when the main Save button is clicked
+      showNotification(`Override for ${domain} marked for removal. Save settings to confirm.`, 2500);
+      // Check if the list becomes empty
+      if (contextOverridesList.querySelectorAll('.override-item').length === 0) {
+        displayContextOverrides({}); // Show empty state
+      }
+    });
+
+    item.appendChild(domainSpan);
+    item.appendChild(contextSpan);
+    item.appendChild(removeButton);
+    contextOverridesList.appendChild(item);
+  });
+}
+
+// Parked Links UI Functions
+async function displayParkedLinks(parkedLinks: Array<{url: string, title?: string, timestamp: number}>) {
+  if (!parkedLinksList) return;
+  
+  parkedLinksList.innerHTML = '';
+  
+  if (!parkedLinks || parkedLinks.length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'empty-state';
+    emptyMsg.textContent = 'No links have been parked yet.';
+    parkedLinksList.appendChild(emptyMsg);
+    return;
+  }
+  
+  parkedLinks.forEach(link => {
+    const linkItem = document.createElement('div');
+    linkItem.className = 'parked-link-item';
+    
+    const linkInfo = document.createElement('div');
+    
+    const title = document.createElement('div');
+    title.className = 'link-title';
+    title.textContent = link.title || 'Untitled';
+    
+    const url = document.createElement('div');
+    url.className = 'link-url';
+    url.textContent = link.url;
+    
+    linkInfo.appendChild(title);
+    linkInfo.appendChild(url);
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'link-remove';
+    removeBtn.innerHTML = '&times;';
+    removeBtn.addEventListener('click', async () => {
+      await removeParkedLink(link.url);
+      linkItem.remove();
+    });
+    
+    linkItem.appendChild(linkInfo);
+    linkItem.appendChild(removeBtn);
+    
+    parkedLinksList.appendChild(linkItem);
+  });
+}
+
+async function removeParkedLink(url: string) {
+  const { parkedLinks } = await getStorage(['parkedLinks']);
+  
+  if (parkedLinks) {
+    const updatedLinks = parkedLinks.filter(link => link.url !== url);
+    await setStorage({ parkedLinks: updatedLinks });
+  }
+}
+
+async function handleReleaseParkedLinks() {
+  try {
+    await releaseParkedLinks();
+    await displayParkedLinks([]);
+    showNotification("All links have been opened in new tabs");
+  } catch (error) {
+    console.error("Error releasing parked links:", error);
+    showNotification("Error opening links", 3000);
+  }
+}
+
+async function handleClearParkedLinks() {
+  if (confirm("Are you sure you want to clear all parked links?")) {
+    await clearParkedLinks();
+    await displayParkedLinks([]);
+    showNotification("All parked links have been cleared");
+  }
+}
+
+// Feedback UI Functions
+async function displayFeedbackStats() {
+  if (!feedbackStats) return;
+  
+  feedbackStats.innerHTML = '';
+  
+  try {
+    const stats = await getFeedbackStatistics();
+    
+    if (stats.totalFeedback === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.className = 'empty-state';
+      emptyMsg.textContent = 'No feedback has been provided yet.';
+      feedbackStats.appendChild(emptyMsg);
+      return;
+    }
+    
+    // Create stats display
+    const summaryDiv = document.createElement('div');
+    summaryDiv.style.display = 'flex';
+    summaryDiv.style.justifyContent = 'space-between';
+    summaryDiv.style.flexWrap = 'wrap';
+    
+    // Total feedback count
+    const countDiv = document.createElement('div');
+    countDiv.style.textAlign = 'center';
+    countDiv.style.margin = '0 10px 15px 0';
+    
+    const countTitle = document.createElement('h3');
+    countTitle.style.margin = '0 0 5px 0';
+    countTitle.textContent = stats.totalFeedback.toString();
+    
+    const countLabel = document.createElement('div');
+    countLabel.style.fontSize = '14px';
+    countLabel.style.color = '#666';
+    countLabel.textContent = 'Total Corrections';
+    
+    countDiv.appendChild(countTitle);
+    countDiv.appendChild(countLabel);
+    summaryDiv.appendChild(countDiv);
+    
+    // Top corrections
+    if (stats.mostCommonCorrections.length > 0) {
+      const correctionsDiv = document.createElement('div');
+      correctionsDiv.style.flexGrow = '1';
+      
+      const correctionsTitle = document.createElement('h4');
+      correctionsTitle.style.margin = '0 0 10px 0';
+      correctionsTitle.textContent = 'Common Corrections';
+      correctionsDiv.appendChild(correctionsTitle);
+      
+      const correctionsList = document.createElement('ul');
+      correctionsList.style.margin = '0';
+      correctionsList.style.padding = '0 0 0 20px';
+      
+      stats.mostCommonCorrections.forEach(correction => {
+        const item = document.createElement('li');
+        item.textContent = `${correction.from} → ${correction.to} (${correction.count} times)`;
+        correctionsList.appendChild(item);
+      });
+      
+      correctionsDiv.appendChild(correctionsList);
+      summaryDiv.appendChild(correctionsDiv);
+    }
+    
+    feedbackStats.appendChild(summaryDiv);
+    
+  } catch (error) {
+    console.error("Error displaying feedback stats:", error);
+    const errorMsg = document.createElement('div');
+    errorMsg.textContent = 'Error loading feedback statistics';
+    errorMsg.style.color = '#f44336';
+    feedbackStats.appendChild(errorMsg);
+  }
+}
+
+async function displayFeedbackHistory() {
+  if (!feedbackHistory) return;
+  
+  feedbackHistory.innerHTML = '';
+  
+  try {
+    const history = await getFeedbackHistory();
+    
+    if (history.length === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.className = 'empty-state';
+      emptyMsg.textContent = 'No feedback history available.';
+      feedbackHistory.appendChild(emptyMsg);
+      return;
+    }
+    
+    // Create table layout
+    const table = document.createElement('table');
+    table.style.width = '100%';
+    table.style.borderCollapse = 'collapse';
+    
+    // Table header
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    
+    ['URL', 'From', 'To', 'Date'].forEach(headerText => {
+      const th = document.createElement('th');
+      th.textContent = headerText;
+      th.style.textAlign = 'left';
+      th.style.padding = '8px';
+      th.style.borderBottom = '1px solid #ddd';
+      headerRow.appendChild(th);
+    });
+    
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Table body
+    const tbody = document.createElement('tbody');
+    
+    // Sort by most recent first
+    history.sort((a, b) => b.timestamp - a.timestamp).forEach(item => {
+      const row = document.createElement('tr');
+      
+      // URL column
+      const urlCell = document.createElement('td');
+      urlCell.textContent = item.domain;
+      urlCell.title = item.url;
+      urlCell.style.padding = '8px';
+      row.appendChild(urlCell);
+      
+      // From context
+      const fromCell = document.createElement('td');
+      fromCell.textContent = item.predictedContext;
+      fromCell.style.padding = '8px';
+      row.appendChild(fromCell);
+      
+      // To context
+      const toCell = document.createElement('td');
+      toCell.textContent = item.correctedContext;
+      toCell.style.padding = '8px';
+      row.appendChild(toCell);
+      
+      // Date
+      const dateCell = document.createElement('td');
+      dateCell.textContent = new Date(item.timestamp).toLocaleDateString();
+      dateCell.style.padding = '8px';
+      row.appendChild(dateCell);
+      
+      tbody.appendChild(row);
+    });
+    
+    table.appendChild(tbody);
+    feedbackHistory.appendChild(table);
+    
+  } catch (error) {
+    console.error("Error displaying feedback history:", error);
+    const errorMsg = document.createElement('div');
+    errorMsg.textContent = 'Error loading feedback history';
+    errorMsg.style.color = '#f44336';
+    feedbackHistory.appendChild(errorMsg);
+  }
+}
+
+async function handleClearFeedback() {
+  if (confirm("Are you sure you want to clear all feedback history?")) {
+    try {
+      await clearFeedbackHistory();
+      await displayFeedbackStats();
+      await displayFeedbackHistory();
+      showNotification("Feedback history has been cleared");
+    } catch (error) {
+      console.error("Error clearing feedback:", error);
+      showNotification("Error clearing feedback history", 3000);
+    }
+  }
+}
+
+# ./src/popup/popup.html
+################################################################################
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Focus</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      width: 320px;
+      padding: 16px;
+      margin: 0;
+      color: #333;
+    }
+    
+    h1 {
+      font-size: 24px;
+      margin: 0 0 16px;
+      text-align: center;
+      color: #1565c0;
+    }
+    
+    p {
+      margin: 8px 0 16px;
+    }
+    
+    label {
+      display: block;
+      margin: 8px 0;
+    }
+    
+    input[type="number"] {
+      padding: 8px;
+      width: 60px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    
+    button {
+      background: #1565c0;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 16px;
+      font-size: 16px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 16px;
+    }
+    
+    button:hover {
+      background: #0D47A1;
+    }
+    
+    #contextList {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 16px 0;
+    }
+    
+    .context-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    #allowedTags {
+      font-weight: bold;
+    }
+    
+    #countdown {
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+      margin: 16px 0;
+    }
+    
+    #endBtn {
+      background: #d32f2f;
+    }
+    
+    #endBtn:hover {
+      background: #b71c1c;
+    }
+  </style>
+</head>
+<body>
+  <h1>Focus</h1>
+
+  <section id="inactiveUI">
+    <p>Select the contexts you need right now:</p>
+    <div id="contextList">
+      <!-- Context checkboxes will be populated by JS -->
+    </div>
+    <label>
+      ⏱ Duration (min, optional):
+      <input id="duration" type="number" min="1" placeholder="∞">
+    </label>
+    <button id="startBtn">Start Focus</button>
+  </section>
+
+  <section id="activeUI" hidden>
+    <p>Focusing on: <span id="allowedTags"></span></p>
+    <p id="countdown"></p>
+    <button id="endBtn">End Focus</button>
+  </section>
+
+  <hr style="margin: 20px 0;">
+
+  <section id="feedbackSection">
+    <p style="margin-bottom: 8px;">Current page context seem wrong?</p>
+    <button id="showFeedbackBtn" style="width: auto; padding: 6px 12px; font-size: 14px; background-color: #ff9800;">Correct Context</button>
+    <div id="feedbackForm" hidden style="margin-top: 10px; border: 1px solid #ccc; padding: 10px; border-radius: 4px;">
+      <label for="correctContextSelect">What should it be?</label>
+      <select id="correctContextSelect" style="width: 100%; padding: 8px; margin-bottom: 10px;">
+        <!-- Options will be populated by JS -->
+      </select>
+      <button id="submitFeedbackBtn" style="font-size: 14px; padding: 8px 14px; background-color: #4CAF50;">Submit Correction</button>
+    </div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
+# ./src/popup/popup.ts
+################################################################################
+/**
+ * Simplified popup for the Focus extension
+ * 
+ * This popup allows users to select which contexts they want to focus on
+ * and optionally set a timer duration. Everything else is blocked.
+ */
+
+import { getFocusState } from "../api/storageApi";
+
+// DOM Elements
+const inactiveUI = document.getElementById('inactiveUI') as HTMLElement;
+const activeUI = document.getElementById('activeUI') as HTMLElement;
+const contextList = document.getElementById('contextList') as HTMLElement;
+const durationInput = document.getElementById('duration') as HTMLInputElement;
+const startBtn = document.getElementById('startBtn') as HTMLButtonElement;
+const endBtn = document.getElementById('endBtn') as HTMLButtonElement;
+const allowedTags = document.getElementById('allowedTags') as HTMLElement;
+const countdown = document.getElementById('countdown') as HTMLElement;
+
+// Feedback UI Elements
+const feedbackSection = document.getElementById('feedbackSection') as HTMLElement;
+const showFeedbackBtn = document.getElementById('showFeedbackBtn') as HTMLButtonElement;
+const feedbackForm = document.getElementById('feedbackForm') as HTMLElement;
+const correctContextSelect = document.getElementById('correctContextSelect') as HTMLSelectElement;
+const submitFeedbackBtn = document.getElementById('submitFeedbackBtn') as HTMLButtonElement;
+
+// Available contexts
+const AVAILABLE_CONTEXTS = [
+  'Work',
+  'Development',
+  'Research',
+  'Learning',
+  'Entertainment',
+  'Social', 
+  'Shopping',
+  'News'
+];
+
+// Initialize the popup
+async function initPopup() {
+  // Render context checkboxes
+  renderContextList();
+  
+  // Check current focus state
+  const focusState = await getFocusState();
+  
+  if (focusState.active) {
+    // Show active UI
+    renderActive(focusState);
+  } else {
+    // Show inactive UI
+    renderInactive();
+  }
+  
+  // Setup event listeners
+  setupEventListeners();
+  
+  // Start polling for updates (to update the countdown)
+  startPolling();
+}
+
+// Render the list of contexts as checkboxes
+function renderContextList() {
+  contextList.innerHTML = '';
+  
+  AVAILABLE_CONTEXTS.forEach(context => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'context-checkbox';
+    
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = context;
+    input.id = `context-${context}`;
+    input.className = 'context-checkbox-input';
+    
+    const label = document.createElement('label');
+    label.textContent = context;
+    label.htmlFor = `context-${context}`;
+    
+    wrapper.appendChild(input);
+    wrapper.appendChild(label);
+    contextList.appendChild(wrapper);
+  });
+}
+
+// Show the inactive UI (start focus)
+function renderInactive() {
+  inactiveUI.hidden = false;
+  activeUI.hidden = true;
+}
+
+// Show the active UI (end focus)
+function renderActive(focusState: any) {
+  inactiveUI.hidden = true;
+  activeUI.hidden = false;
+  
+  // Show allowed contexts
+  allowedTags.textContent = focusState.allowedContexts.join(', ');
+  
+  // Show countdown if there's a timer
+  updateCountdown(focusState);
+}
+
+// Update the countdown timer
+function updateCountdown(focusState: any) {
+  if (!focusState.endTime) {
+    countdown.textContent = 'No time limit';
+    return;
+  }
+  
+  const now = Date.now();
+  const timeLeft = Math.max(0, focusState.endTime - now);
+  
+  if (timeLeft <= 0) {
+    countdown.textContent = 'Time expired';
+    return;
+  }
+  
+  // Format as MM:SS
+  const minutes = Math.floor(timeLeft / 60000);
+  const seconds = Math.floor((timeLeft % 60000) / 1000);
+  
+  countdown.textContent = `${minutes}:${seconds.toString().padStart(2, '0')} remaining`;
+}
+
+// Populate the feedback context selector
+function populateFeedbackSelector() {
+  correctContextSelect.innerHTML = '<option value="" disabled selected>Select correct context...</option>';
+  AVAILABLE_CONTEXTS.forEach(context => {
+    const option = document.createElement('option');
+    option.value = context;
+    option.textContent = context;
+    correctContextSelect.appendChild(option);
+  });
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  // Start Focus button
+  startBtn.addEventListener('click', () => {
+    // Get selected contexts
+    const selectedCheckboxes = document.querySelectorAll<HTMLInputElement>('.context-checkbox-input:checked');
+    const allowedContexts = Array.from(selectedCheckboxes).map(cb => cb.value);
+    
+    if (allowedContexts.length === 0) {
+      alert('Please select at least one context to focus on');
+      return;
+    }
+    
+    // Get duration (if any)
+    const duration = durationInput.value ? parseInt(durationInput.value, 10) : undefined;
+    
+    // Start focus session with allowed contexts directly
+    chrome.runtime.sendMessage({
+      type: 'START_FOCUS_SESSION',
+      payload: {
+        allowedContexts: allowedContexts,
+        durationMinutes: duration
+      }
+    }, () => {
+      // Refresh the popup after starting
+      window.location.reload();
+    });
+  });
+  
+  // End Focus button
+  endBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'END_FOCUS_SESSION'
+    }, () => {
+      // Refresh the popup after ending
+      window.location.reload();
+    });
+  });
+
+  // Feedback listeners
+  showFeedbackBtn.addEventListener('click', () => {
+    feedbackForm.hidden = !feedbackForm.hidden; // Toggle visibility
+    if (!feedbackForm.hidden) {
+      populateFeedbackSelector(); // Populate dropdown when shown
+    }
+  });
+
+  submitFeedbackBtn.addEventListener('click', async () => {
+    const correctedContext = correctContextSelect.value;
+    if (!correctedContext) {
+      alert('Please select the correct context.');
+      return;
+    }
+
+    try {
+      // Get current tab info
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.url) {
+        alert("Could not get current tab URL.");
+        return;
+      }
+      
+      let targetUrl = tab.url!;               // current tab
+      let predicted = "Unknown (Popup)";      // fallback
+
+      // If we're on the extension's blocked page, pull the real data from its query‑string
+      const blockedPrefix = chrome.runtime.getURL("blocked.html");
+      if (targetUrl.startsWith(blockedPrefix)) {
+        const blockedUrl = new URL(targetUrl);
+        const original = blockedUrl.searchParams.get("url");
+        const ctx = blockedUrl.searchParams.get("context");
+
+        if (original) targetUrl = decodeURIComponent(original);
+        if (ctx) predicted = ctx;       // what the classifier thought
+      }
+
+      const domain = new URL(targetUrl).hostname;
+
+      // Send feedback
+      await chrome.runtime.sendMessage({
+        type: "FEEDBACK_SUBMITTED",
+        payload: {
+          url: targetUrl,
+          domain: domain,
+          predictedContext: predicted,
+          correctedContext: correctedContext,
+          source: 'popup'
+        }
+      });
+
+      alert(`Feedback submitted for ${domain} as ${correctedContext}.`);
+      feedbackForm.hidden = true; // Hide form after submission
+
+    } catch (error) {
+      console.error("Error submitting feedback from popup:", error);
+      alert("Error submitting feedback.");
+    }
+  });
+}
+
+// Poll for updates (for countdown)
+function startPolling() {
+  setInterval(async () => {
+    const focusState = await getFocusState();
+    
+    if (focusState.active && !activeUI.hidden) {
+      updateCountdown(focusState);
+    }
+  }, 1000);
+}
+
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', initPopup);
+
+# ./src/sidepanel/index.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Focus Session</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0d47a1;
+      color: #fff;
+      text-align: center;
+      padding: 15px;
+    }
+    #timer {
+      font-size: 32px;
+      text-align: center;
+      margin: 20px 0;
+      font-weight: bold;
+    }
+    .btn {
+      display: block;
+      width: 90%;
+      margin: 10px auto;
+      padding: 8px;
+      background: #d32f2f;
+      border: 0;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .btn:hover {
+      background: #b71c1c;
+    }
+    .status {
+      margin: 15px 0;
+      padding: 10px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.1);
+    }
+    .context-list {
+      margin-top: 20px;
+      text-align: left;
+    }
+    .context-item {
+      padding: 5px;
+      margin-bottom: 5px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.1);
+    }
+    .context-item.blocked {
+      text-decoration: line-through;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <h2>FOCUS SESSION</h2>
+  <div id="timer">--:--</div>
+  
+  <div class="status">
+    Blocked categories:
+    <div id="blockedList" class="context-list">
+      <!-- Blocked categories will be populated here -->
+    </div>
+  </div>
+  
+  <button id="endBtn" class="btn">End Session</button>
+  
+  <script src="../sidepanel.js"></script>
+</body>
+</html> 
+
+# ./src/sidepanel/index.ts
+################################################################################
+// DOM element references
+const timerEl = document.getElementById("timer") as HTMLElement;
+const endBtn = document.getElementById("endBtn") as HTMLButtonElement;
+const blockedList = document.getElementById("blockedList") as HTMLElement;
+
+interface FocusTimeResponse {
+  seconds: number;
+}
+
+/**
+ * Update timer display every second
+ */
+async function updateTimer(): Promise<void> {
+  try {
+    const response = await chrome.runtime.sendMessage<any, FocusTimeResponse>({ 
+      type: "GET_FOCUS_TIME_LEFT" 
+    });
+    
+    const seconds = response?.seconds || 0;
+    
+    if (seconds <= 0) {
+      timerEl.textContent = "COMPLETE";
+      timerEl.style.color = "#4caf50"; // Green
+      return;
+    }
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    
+    // Visual warning when time is low
+    if (seconds < 300) { // Less than 5 minutes (300 seconds)
+      timerEl.style.color = "#ff9800"; // Orange
+    }
+  } catch (error) {
+    console.error("Error fetching time left:", error);
+    timerEl.textContent = "ERROR";
+    timerEl.style.color = "#f44336"; // Red
+  }
+}
+
+/**
+ * Load blocked categories from storage
+ */
+async function loadBlockedCategories(): Promise<void> {
+  try {
+    const { blockedCategories } = await chrome.storage.local.get("blockedCategories");
+    
+    if (!blockedList) return;
+    
+    if (blockedCategories && blockedCategories.length > 0) {
+      blockedList.innerHTML = '';
+      
+      blockedCategories.forEach((category: string) => {
+        const div = document.createElement('div');
+        div.className = 'context-item blocked';
+        div.textContent = category;
+        blockedList.appendChild(div);
+      });
+    } else {
+      blockedList.innerHTML = '<div class="context-item">No categories blocked</div>';
+    }
+  } catch (error) {
+    console.error("Error loading blocked categories:", error);
+    if (blockedList) {
+      blockedList.innerHTML = '<div class="context-item">Error loading categories</div>';
+    }
+  }
+}
+
+/**
+ * Handle ending the focus session
+ */
+async function handleEndSession(): Promise<void> {
+  try {
+    const saveWorkspace = confirm("Save current workspace before ending?");
+    let workspaceName = '';
+    
+    if (saveWorkspace) {
+      workspaceName = prompt("Enter workspace name:", `Workspace_${new Date().toLocaleDateString()}`) || '';
+      if (!workspaceName) return; // User cancelled
+    }
+    
+    await chrome.runtime.sendMessage({
+      type: "END_FOCUS_SESSION",
+      payload: {
+        saveWorkspace,
+        workspaceName
+      }
+    });
+    
+    timerEl.textContent = "ENDED";
+    timerEl.style.color = "#f44336"; // Red
+    endBtn.disabled = true;
+    endBtn.textContent = "Session Ended";
+  } catch (error) {
+    console.error("Error ending session:", error);
+    alert("Error ending session. Please try again.");
+  }
+}
+
+/**
+ * Initialize the sidepanel
+ */
+function initialize(): void {
+  // Add event listener to end button
+  endBtn?.addEventListener("click", handleEndSession);
+  
+  // Load initial data
+  loadBlockedCategories().catch(console.error);
+  updateTimer().catch(console.error);
+  
+  // Set up timer interval
+  setInterval(() => {
+    updateTimer().catch(console.error);
+  }, 1000);
+}
+
+// Start everything when page loads
+document.addEventListener("DOMContentLoaded", initialize); 
+
+# ./src/sidepanel/parkedLinks.ts
+################################################################################
+import { getParkedLinks, releaseParkedLinks } from "../api/parkedLinksApi";
+import { ParkedLink } from "../types/index";
+
+/**
+ * Create the UI for showing parked links in the side panel
+ */
+export async function createParkedLinksUI(container: HTMLElement): Promise<void> {
+  const parkedLinks = await getParkedLinks();
+  
+  // Create section for parked links
+  const section = document.createElement("section");
+  section.classList.add("parked-links-section");
+  section.style.marginTop = "20px";
+  section.style.borderTop = "1px solid #eee";
+  section.style.paddingTop = "15px";
+  
+  // Section header
+  const header = document.createElement("h3");
+  header.textContent = "Parked for Later";
+  header.style.fontSize = "16px";
+  header.style.marginBottom = "10px";
+  header.style.fontWeight = "bold";
+  section.appendChild(header);
+
+  // Show different UI depending on whether there are parked links
+  if (parkedLinks.length === 0) {
+    const emptyMessage = document.createElement("p");
+    emptyMessage.textContent = "No links have been parked yet.";
+    emptyMessage.style.color = "#666";
+    emptyMessage.style.fontSize = "14px";
+    emptyMessage.style.fontStyle = "italic";
+    section.appendChild(emptyMessage);
+  } else {
+    // Create a list for the parked links
+    const linksList = document.createElement("ul");
+    linksList.style.listStyle = "none";
+    linksList.style.padding = "0";
+    linksList.style.margin = "0";
+    
+    parkedLinks.forEach((link) => {
+      const listItem = document.createElement("li");
+      listItem.style.padding = "8px 0";
+      listItem.style.borderBottom = "1px solid #f0f0f0";
+      
+      const linkTitle = document.createElement("div");
+      linkTitle.textContent = link.title || link.url;
+      linkTitle.style.fontSize = "14px";
+      linkTitle.style.fontWeight = "500";
+      linkTitle.style.textOverflow = "ellipsis";
+      linkTitle.style.overflow = "hidden";
+      linkTitle.style.whiteSpace = "nowrap";
+      linkTitle.style.marginBottom = "4px";
+      listItem.appendChild(linkTitle);
+      
+      const linkInfo = document.createElement("div");
+      linkInfo.style.display = "flex";
+      linkInfo.style.justifyContent = "space-between";
+      linkInfo.style.fontSize = "12px";
+      linkInfo.style.color = "#666";
+      
+      const contextSpan = document.createElement("span");
+      contextSpan.textContent = link.context;
+      linkInfo.appendChild(contextSpan);
+      
+      const timeSpan = document.createElement("span");
+      const date = new Date(link.timestamp);
+      timeSpan.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      linkInfo.appendChild(timeSpan);
+      
+      listItem.appendChild(linkInfo);
+      linksList.appendChild(listItem);
+    });
+    
+    section.appendChild(linksList);
+    
+    // Add a button to open all links
+    const openAllBtn = document.createElement("button");
+    openAllBtn.textContent = "Open All Links";
+    openAllBtn.style.marginTop = "15px";
+    openAllBtn.style.padding = "8px 12px";
+    openAllBtn.style.backgroundColor = "#0066cc";
+    openAllBtn.style.color = "#fff";
+    openAllBtn.style.border = "none";
+    openAllBtn.style.borderRadius = "4px";
+    openAllBtn.style.cursor = "pointer";
+    openAllBtn.style.fontWeight = "500";
+    
+    openAllBtn.addEventListener("click", async () => {
+      try {
+        await releaseParkedLinks();
+        
+        // Update the UI after opening links
+        createParkedLinksUI(container);
+      } catch (error) {
+        console.error("Error opening parked links:", error);
+      }
+    });
+    
+    section.appendChild(openAllBtn);
+  }
+  
+  // Clear existing content and append the new section
+  container.innerHTML = "";
+  container.appendChild(section);
+}
+
+/**
+ * Initialize the parked links UI and set up refresh
+ */
+export function initParkedLinksUI(containerId: string): void {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error("Container not found:", containerId);
+    return;
+  }
+  
+  // Initial UI creation
+  createParkedLinksUI(container);
+  
+  // Refresh UI periodically
+  setInterval(() => {
+    createParkedLinksUI(container);
+  }, 30000); // refresh every 30 seconds
+} 
+
+# ./src/types/chrome.d.ts
+################################################################################
+// Type definitions for Chrome's sidePanel API
+// This extends the standard chrome type definitions
+
+declare namespace chrome {
+  export namespace sidePanel {
+    export interface SidePanelOptions {
+      path?: string;
+      enabled?: boolean;
+    }
+
+    export interface PanelInfo {
+      windowId: number;
+      path: string;
+      enabled: boolean;
+    }
+
+    export interface OpenOptions {
+      windowId?: number;
+      path?: string;
+    }
+
+    export interface CloseOptions {
+      windowId: number;
+    }
+
+    export function getOptions(): Promise<SidePanelOptions>;
+    export function setOptions(options: SidePanelOptions): Promise<void>;
+    export function open(options?: OpenOptions): Promise<void>;
+    export function close(options: CloseOptions): Promise<void>;
+    export function getAll(): Promise<PanelInfo[]>;
+  }
+} 
+
+# ./src/types/index.d.ts
+################################################################################
+export interface TabContextMap {
+  [tabId: number]: string;
+}
+
+export interface PageData {
+  url: string;
+  title: string;
+  fullText: string;
+  metaDescription: string;
+  metaKeywords: string[];
+  domainCategory?: string;
+}
+
+export interface ContextResult {
+  primaryContext: string;
+  confidence: number;
+  secondaryContexts: Array<{context: string, confidence: number}>;
+  features?: Record<string, number>;
+}
+
+export interface ContextSwitch {
+  from: string;
+  to: string;
+  timestamp: number;
+  fromUrl: string;
+  toUrl: string;
+}
+
+export interface FocusStatus {
+  isLostFocus: boolean;
+  contextSwitches: ContextSwitch[];
+  currentStreak: number;
+  currentContext: string;
+}
+
+export interface ParkedLink {
+  url: string;
+  title?: string;
+  context: string;      // Entertainment, Social, …
+  timestamp: number;    // when it was parked
+}
+
+export interface FocusSettings {
+  enabled: boolean;
+  notificationsEnabled: boolean;
+  switchThreshold: number;
+  timeWindowMinutes: number;
+  focusWindowEnabled?: boolean;
+}
+
+export interface FocusState {
+  active: boolean;            // true while a focus session is running
+  allowedContexts: string[];  // the contexts the user *wants* to stay in
+  endTime?: number;           // optional timer
+}
+
+export interface ClassificationFeedback {
+  url: string;                // Specific URL where feedback was given
+  domain: string;             // Domain extracted from the URL
+  timestamp: number;          // When the feedback was provided
+  predictedContext: string;   // What the system originally thought
+  correctedContext: string;   // What the user said it should be
+  source: 'blockedPage' | 'popup' | 'options'; // Where did the feedback originate?
+}
+
+export interface StorageData {
+  extensionEnabled?: boolean;
+  autoGroupEnabled?: boolean;
+  focusSettings?: FocusSettings;
+  contextHistory?: Array<{context: string, url: string, timestamp: number, confidence: number}>;
+  domainCategories?: Record<string, string>;
+  contextKeywords?: Record<string, Record<string, number>>;
+  
+  /** New single focus state object */
+  focusState?: FocusState;
+  
+  /** Categories blocked in focus mode (for backward compatibility) */
+  blockedCategories?: string[];
+  
+  /** Per-URL or sub-URL overrides so users can reclassify them as allowed/disallowed */
+  subUrlOverrides?: Record<string, string>;
+
+  /** Links parked for later viewing */
+  parkedLinks?: ParkedLink[];
+
+  /** Feedback events log for auditing and ML training */
+  classificationFeedbackLog?: ClassificationFeedback[];
+
+  /** Domain to context mapping */
+  domainContextMap?: Record<string, string>;
+
+  /** full backup of all windows/tabs while focus mode runs */
+  focusBackup?: Array<{
+    state: chrome.windows.WindowState;
+    focused: boolean;
+    tabs: Array<{
+      url: string;
+      pinned: boolean;
+      active: boolean;
+    }>;
+  }>;
+  
+  /**
+   * Saved tab groups for workspace restoration. 
+   * Each workspace can have an ID or name plus list of tabs, etc.
+   */
+  savedWorkspaces?: Array<{
+    name: string;
+    tabGroups: Array<{
+      groupId: number;
+      title: string;
+      color: chrome.tabGroups.ColorEnum;
+      tabUrls: string[];
+    }>;
+    timestamp: number;
+  }>;
+}
+
+# ./src/types/index.ts
+################################################################################
+export interface ClassificationFeedback {
+  url: string;
+  domain: string;
+  timestamp: number;
+  predictedContext: string;
+  correctedContext: string;
+  source: string;
+}
+
+export interface UrlPatternOverride {
+  pattern: string;      // The URL pattern to match (can include path, query, etc.)
+  context: string;      // The context to apply if URL matches this pattern
+  priority: number;     // Higher priority overrides take precedence (useful for more specific patterns)
+  createdAt: number;    // When this override was created
+  matchType: 'startsWith' | 'exact';  // How to match the pattern - simplified to reliable options
+  description?: string; // Optional user-friendly description of what this override does
+}
+
+export interface FocusState {
+  active: boolean;
+  allowedContexts: string[];
+  endTime?: number;
+}
+
+export interface PageData {
+  url: string;
+  title: string;
+  fullText: string;
+  metaDescription: string;
+  metaKeywords: string[];
+  domainCategory?: string;
+}
+
+export interface ContextResult {
+  primaryContext: string;
+  confidence: number;
+  secondaryContexts: Array<{context: string, confidence: number}>;
+  features?: Record<string, number>;
+}
+
+export interface ContextSwitch {
+  from: string;
+  to: string;
+  timestamp: number;
+  fromUrl: string;
+  toUrl: string;
+}
+
+export interface FocusStatus {
+  isLostFocus: boolean;
+  contextSwitches: ContextSwitch[];
+  currentStreak: number;
+  currentContext: string;
+}
+
+export interface ParkedLink {
+  url: string;
+  title?: string;
+  context: string;      // Entertainment, Social, …
+  timestamp: number;    // when it was parked
+}
+
+export interface FocusSettings {
+  enabled: boolean;
+  notificationsEnabled: boolean;
+  switchThreshold: number;
+  timeWindowMinutes: number;
+  focusWindowEnabled?: boolean;
+}
+
+export interface StorageData {
+  extensionEnabled: boolean;
+  autoGroupEnabled: boolean;
+  focusState: FocusState;
+  domainContextMap: Record<string, string>;
+  urlPatternOverrides: UrlPatternOverride[];
+  classificationFeedbackLog: ClassificationFeedback[];
+  contextHistory: Array<{
+    context: string;
+    url: string;
+    timestamp: number;
+    confidence: number;
+  }>;
+  focusSettings?: FocusSettings;
+  subUrlOverrides?: Record<string, string>;
+  parkedLinks?: ParkedLink[];
+  blockedCategories?: string[];
+  contextKeywords?: Record<string, Record<string, number>>;
+  savedWorkspaces?: Array<{
+    name: string;
+    tabGroups: Array<{
+      groupId: number;
+      title: string;
+      color: chrome.tabGroups.ColorEnum;
+      tabUrls: string[];
+    }>;
+    timestamp: number;
+  }>;
+  pathOverrides?: string[]; // Legacy - will be migrated to urlPatternOverrides
+} 
+

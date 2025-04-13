@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Focus Check</title>
+  <style>
+    body {
+      background: #1976d2;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding-top: 50px;
+      margin: 0;
+      transition: background-color 0.5s;
+    }
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    h1 {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+    p {
+      margin-bottom: 15px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    select, button {
+      background-color: white;
+      color: #1976d2;
+      border: none;
+      padding: 10px 15px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 10px 5px;
+      border-radius: 4px;
+      min-width: 200px;
+    }
+    select {
+      text-align: center;
+    }
+    button:hover {
+      background-color: #f0f0f0;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    #remaining {
+      font-size: 1.2em;
+      margin-top: 20px;
+    }
+    .choice-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px 0;
+    }
+    .buttons {
+      margin-top: 20px;
+    }
+    .timer {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-top: 30px;
+    }
+    .highlight {
+      font-weight: bold;
+      color: #ffeb3b;
+    }
+    .on-track {
+      background: #43a047;
+    }
+    .off-track {
+      background: #e53935;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⏱️ Focus Check</h1>
+    <p>This page was automatically categorized as <span id="detected-context" class="highlight">Unknown</span></p>
+    <p>Are you still on track with your focus goals?</p>
+    
+    <div class="choice-area">
+      <select id="context-selector">
+        <option value="" disabled selected>Select the correct context...</option>
+        <option value="Work">Work</option>
+        <option value="Development">Development</option>
+        <option value="Research">Research</option>
+        <option value="Learning">Learning</option>
+        <option value="Entertainment">Entertainment</option>
+        <option value="Social">Social</option>
+        <option value="Shopping">Shopping</option>
+        <option value="News">News</option>
+      </select>
+      
+      <div class="buttons">
+        <button id="save-continue">This is work-related, continue</button>
+        <button id="back-button">Go back, I'm off track</button>
+      </div>
+    </div>
+    
+    <div class="timer">
+      <div id="remaining">Focus session ends in <span id="countdown">--:--</span></div>
+    </div>
+  </div>
+  <script src="blocked.js"></script>
+</body>
+</html> 
