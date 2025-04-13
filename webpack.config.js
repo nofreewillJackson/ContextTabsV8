@@ -44,7 +44,7 @@ const ui = {
       patterns: [
         { from: "src/popup/popup.html", to: "popup.html" },
         { from: "src/options/options.html", to: "options.html" },
-        { from: "src/sidepanel/index.html", to: "sidepanel.html" },
+        { from: "src/sidepanel.html", to: "sidepanel.html" },
         { from: "src/blocked.html", to: "blocked.html" },
         { from: "src/focusmode.html", to: "focusmode.html" },
         { from: "src/onboarding.html", to: "onboarding.html", noErrorOnMissing: true },

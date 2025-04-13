@@ -164,13 +164,41 @@ function setupEventListeners() {
   });
   
   // End Focus button
-  endBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      type: 'END_FOCUS_SESSION'
-    }, () => {
-      // Refresh the popup after ending
-      window.location.reload();
-    });
+  endBtn.addEventListener('click', async () => {
+    try {
+      // --- Add the confirmation and prompt logic here ---
+      const saveWorkspace = confirm("Save current workspace before ending?");
+      let workspaceName: string | undefined = undefined;
+
+      if (saveWorkspace) {
+        // Prompt returns null if cancelled, empty string if OK with no input
+        const nameInput = prompt("Enter workspace name:", `Workspace_${new Date().toLocaleDateString()}`);
+        if (nameInput === null) {
+          console.log("User cancelled saving workspace.");
+          return; // Stop the end process if user cancels the prompt
+        }
+        workspaceName = nameInput || `Workspace_${Date.now()}`; // Use timestamp if name is empty
+      }
+      // --- End of added logic ---
+
+      console.log(`[Popup] Ending session. Save workspace: ${saveWorkspace}, Name: ${workspaceName}`);
+
+      // Send the message with the correct payload
+      await chrome.runtime.sendMessage({
+        type: "END_FOCUS_SESSION",
+        payload: { // Ensure payload structure matches background expectation
+          saveWorkspaceName: workspaceName // Send name if provided, otherwise undefined
+        }
+      });
+
+      // Close the popup after sending the message successfully
+      window.close();
+
+    } catch (error) {
+      console.error("Error ending session from popup:", error);
+      // Provide feedback to the user in the popup itself before it closes
+      alert("Error ending session. Please try again.");
+    }
   });
 
   // Feedback listeners

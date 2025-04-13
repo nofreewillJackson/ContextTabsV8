@@ -2386,8 +2386,12 @@ chrome.storage.onChanged.addListener(async (changes) => {
 });
 
 // Block before navigation is committed
-chrome.webNavigation.onBeforeNavigate.addListener(async ({ tabId, frameId, url }) => {
+chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+  const { tabId, frameId, url, documentLifecycle } = details as any;
   if (frameId !== 0) return;                     // only top frame
+  
+  // 🚫  Skip prerender / inactive / discarded documents
+  if (documentLifecycle && documentLifecycle !== "active") return;
   
   // Skip extension pages and about:blank
   if (url.startsWith(chrome.runtime.getURL("")) || url === "about:blank") return;
@@ -2532,12 +2536,27 @@ initExtension().catch(console.error);
 
 import { classifyPageContext } from "../lib/contextEngine";
 
+// Variable to track if we should run the script
+let shouldRunScript = true;
+
+// Abort if this page is being prerendered; we'll start after activation
+if ((document as any).prerendering) {
+  shouldRunScript = false;
+  document.addEventListener("prerenderingchange", () => {
+    // When it becomes visible we continue as usual
+    if (!(document as any).prerendering) {
+      shouldRunScript = true;
+      initContextDetection();
+    }
+  });
+}
+
 // Keep track of last context (to avoid sending duplicate messages)
 let lastContext: string | null = null;
 
 // Reset lastContext when page is restored from bfcache
 window.addEventListener('pageshow', (e) => {
-  if (e.persisted) {
+  if (e.persisted && shouldRunScript) {
     lastContext = null;          // force a fresh classification
     detectAndSendContext();      // re‑emit the correct context
   }
@@ -2545,11 +2564,16 @@ window.addEventListener('pageshow', (e) => {
 
 // Also reset on normal load (helps with History API navigation)
 window.addEventListener('load', () => {
-  lastContext = null;  // force a fresh classification on every page load
+  if (shouldRunScript) {
+    lastContext = null;  // force a fresh classification on every page load
+    initContextDetection();
+  }
 });
 
 // Initialize context detection
 async function initContextDetection(): Promise<void> {
+  if (!shouldRunScript) return;
+  
   // Register for future DOM changes
   setupMutationObserver();
   
@@ -2701,7 +2725,7 @@ function extractPageData() {
  */
 async function detectAndSendContext(): Promise<void> {
   try {
-    if (typing) return;                // ← NEW guard
+    if (typing || !shouldRunScript) return;                
 
     // Extract page data
     const pageData = extractPageData();
@@ -3938,18 +3962,44 @@ export function extractPathKeywords(url: string): string[] {
   }
 }
 
+/** If this is a Google (or Bing, DuckDuckGo …) /search page,
+ *  look at the query string and guess a context from the terms. */
+function guessSearchContext(q: string): string | undefined {
+  const query = q.toLowerCase();
+
+  const researchTerms = /(?:research|study|case\s*report|clinical|procedure|surgery|medical|anatomy|pathology|diagnosis|journal|pubmed)/;
+  const devTerms      = /(?:api|code|github|stackoverflow|library|npm|python|javascript|typescript)/;
+  const newsTerms     = /(?:breaking|headline|election|war|crisis|covid|biden|trump|senate|congress)/;
+  const shoppingTerms = /(?:buy|price|review|discount|deal|amazon|walmart|best\s*buy)/;
+  const entertainment = /(?:movie|tv|trailer|lyrics|song|album|celebrity|kardashian|netflix|spotify)/;
+
+  if (researchTerms.test(query))      return "Research";
+  if (devTerms.test(query))           return "Development";
+  if (newsTerms.test(query))          return "News";
+  if (shoppingTerms.test(query))      return "Shopping";
+  if (entertainment.test(query))      return "Entertainment";
+  return undefined;                   // fall back to normal scoring
+}
+
 /**
  * Analyze URL for context clues
  */
 export function analyzeUrl(url: string): Record<string, number> {
   const domain = extractDomain(url);
+  const scores: Record<string, number> = {};
+
+  // ── special‑case search pages ─────────────────────────────────────
+  if (/\.google\./.test(domain) && url.includes("/search")) {
+    const q = new URL(url).searchParams.get("q") ?? "";
+    const guessed = guessSearchContext(q);
+    if (guessed) scores[guessed] = 0.9;   // very confident
+  }
+  
   const domainCategory = getDomainCategory(domain);
   const pathKeywords = extractPathKeywords(url);
   
-  const scores: Record<string, number> = {};
-  
-  // Set base score from domain
-  if (domainCategory) {
+  // Set base score from domain if not already set by search context
+  if (domainCategory && !scores[domainCategory]) {
     scores[domainCategory] = 0.8;
   }
   

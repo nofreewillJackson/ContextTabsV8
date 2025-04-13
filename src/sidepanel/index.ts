@@ -1,7 +1,10 @@
 // DOM element references
 const timerEl = document.getElementById("timer") as HTMLElement;
 const endBtn = document.getElementById("endBtn") as HTMLButtonElement;
-const blockedList = document.getElementById("blockedList") as HTMLElement;
+const allowedList = document.getElementById("allowedList") as HTMLElement;
+
+import { getFocusState } from '../api/storageApi';
+import { initParkedLinksUI } from './parkedLinks';
 
 interface FocusTimeResponse {
   seconds: number;
@@ -40,30 +43,31 @@ async function updateTimer(): Promise<void> {
 }
 
 /**
- * Load blocked categories from storage
+ * Display the session status showing allowed contexts
  */
-async function loadBlockedCategories(): Promise<void> {
+async function displaySessionStatus(): Promise<void> {
   try {
-    const { blockedCategories } = await chrome.storage.local.get("blockedCategories");
+    const focusState = await getFocusState();
     
-    if (!blockedList) return;
+    if (!allowedList) return;
     
-    if (blockedCategories && blockedCategories.length > 0) {
-      blockedList.innerHTML = '';
+    if (focusState.active && focusState.allowedContexts.length > 0) {
+      allowedList.innerHTML = '';
       
-      blockedCategories.forEach((category: string) => {
+      // Display ALLOWED contexts
+      focusState.allowedContexts.forEach((context: string) => {
         const div = document.createElement('div');
-        div.className = 'context-item blocked';
-        div.textContent = category;
-        blockedList.appendChild(div);
+        div.className = 'context-item allowed';
+        div.textContent = context;
+        allowedList.appendChild(div);
       });
     } else {
-      blockedList.innerHTML = '<div class="context-item">No categories blocked</div>';
+      allowedList.innerHTML = '<div class="context-item">No specific contexts allowed</div>';
     }
   } catch (error) {
-    console.error("Error loading blocked categories:", error);
-    if (blockedList) {
-      blockedList.innerHTML = '<div class="context-item">Error loading categories</div>';
+    console.error("Error loading session status:", error);
+    if (allowedList) {
+      allowedList.innerHTML = '<div class="context-item">Error loading contexts</div>';
     }
   }
 }
@@ -84,8 +88,7 @@ async function handleEndSession(): Promise<void> {
     await chrome.runtime.sendMessage({
       type: "END_FOCUS_SESSION",
       payload: {
-        saveWorkspace,
-        workspaceName
+        saveWorkspaceName: workspaceName
       }
     });
     
@@ -107,8 +110,16 @@ function initialize(): void {
   endBtn?.addEventListener("click", handleEndSession);
   
   // Load initial data
-  loadBlockedCategories().catch(console.error);
+  displaySessionStatus().catch(console.error);
   updateTimer().catch(console.error);
+  
+  // Initialize Parked Links UI
+  const parkedLinksContainer = document.getElementById('parkedLinks');
+  if (parkedLinksContainer) {
+    initParkedLinksUI('parkedLinks');
+  } else {
+    console.warn("Parked links container not found in sidepanel HTML.");
+  }
   
   // Set up timer interval
   setInterval(() => {
